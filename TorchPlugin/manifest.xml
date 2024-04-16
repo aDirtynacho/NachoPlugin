@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <PluginManifest xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <Name>PluginTemplate</Name>
-  <Guid>c889318f-9835-4814-b26e-979242caeb0c</Guid>
-  <Repository>PluginTemplate</Repository>
+  <Name>NachoPlayerTracker</Name>
+  <Guid>604e558b-13b9-4c02-b9b1-9b2e8ab8b6a5</Guid>
+  <Repository>NachoPlayerTracker</Repository>
   <Version>v1.0.0</Version>
 </PluginManifest>

@@ -3,6 +3,7 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using static System.Net.WebRequestMethods;
 
 namespace Shared.Config
 {
@@ -31,6 +32,9 @@ namespace Shared.Config
 
         private bool enabled = true;
         private bool detectCodeChanges = true;
+        private string motd = "TESTING THIS SHIT GOD DAMN";
+        private int cooldown = 15;
+        private ulong admin = 76561198032754201;
         // TODO: Implement your config fields here
         // The default values here will apply to Client and Dedicated.
         // The default values for Torch are defined in TorchPlugin.
@@ -47,6 +51,21 @@ namespace Shared.Config
             set => SetValue(ref detectCodeChanges, value);
         }
 
+        public string Motd
+        {
+            get => motd;
+            set => SetValue(ref motd, value);
+        }
+        public int Cooldown
+        {
+            get => cooldown;
+            set => SetValue(ref cooldown, value);
+        }
+        public ulong Admin
+        {
+            get => admin;
+            set => SetValue(ref admin, value);
+        }
         // TODO: Encapsulate your config fields as properties here
     }
 }
