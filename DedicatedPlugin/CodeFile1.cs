@@ -9,23 +9,37 @@ using System.Collections.Generic;
 using VRageMath;
 using VRage.ModAPI;
 
+// Define the promotion levels
+public enum PromotionLevel
+{
+    Default,
+    Admin
+}
+
+
 namespace NachoPlugin
 {
     [MySessionComponentDescriptor(MyUpdateOrder.NoUpdate)]
+
     public class NachoPlugin : MySessionComponentBase
     {
         private readonly HttpClient _httpClient;
         private readonly string _votingApiUrl;
         private readonly string _claimApiUrl;
         private readonly CooldownManager _cooldownManager;
-        public NachoPlugin(PluginConfig pluginConfig)
+        // Define the default cooldown duration in seconds
+        private const int cooldown = 15;
+        public NachoPlugin()
         {
+
             _httpClient = new HttpClient();
             _votingApiUrl = "https://space-engineers.com/api/?object=votes&element=claim&key=kLQClxZxOP3q6bVnXpS78EEXc3wKp7YB6m&steamid="; // Replace with actual voting API URL
             _claimApiUrl = "https://space-engineers.com/api/?action=post&object=votes&element=claim&key=kLQClxZxOP3q6bVnXpS78EEXc3wKp7YB6m&steamid=";
-            _cooldownManager = new CooldownManager(TimeSpan.FromSeconds(pluginConfig.Cooldown));
+            _cooldownManager = new CooldownManager(TimeSpan.FromSeconds(cooldown));
+
 
         }
+
 
         public override void LoadData()
         {
@@ -385,10 +399,12 @@ namespace NachoPlugin
         }
 
     }
+
     public class CooldownManager
     {
         private readonly Dictionary<(ulong, string), DateTime> _cooldowns = new Dictionary<(ulong, string), DateTime>();
         private readonly TimeSpan _cooldownDuration;
+
 
         public CooldownManager(TimeSpan cooldownDuration)
         {
@@ -419,16 +435,9 @@ namespace NachoPlugin
         }
 
     }
-
-    // Define the promotion levels
-    public enum PromotionLevel
-    {
-        Default,
-        Admin
-    }
-
     public class CommandHandler
     {
+
         // Define the minimum promotion level required for each command
         private readonly Dictionary<string, PromotionLevel> commandPermissions = new Dictionary<string, PromotionLevel>
     {
