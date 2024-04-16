@@ -11,5 +11,12 @@ namespace Shared.Config
         bool DetectCodeChanges { get; set; }
 
         // TODO: Add config properties here, then extend the implementing classes accordingly
+        string Motd {  get; set; }
+
+        int Cooldown {  get; set; }
+
+        ulong Admin {  get; set; }
+
+
     }
 }

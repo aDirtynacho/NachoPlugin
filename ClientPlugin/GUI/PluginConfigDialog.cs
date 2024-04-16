@@ -11,8 +11,8 @@ namespace ClientPlugin.GUI
 {
     public class PluginConfigDialog : MyGuiScreenBase
     {
-        private const string Caption = "PluginTemplate Configuration";
-        public override string GetFriendlyName() => "PluginTemplateConfigDialog";
+        private const string Caption = "NachoPlayerTracker Configuration";
+        public override string GetFriendlyName() => "NachoPlayerTrackerConfigDialog";
 
         private MyLayoutTable layoutTable;
 
