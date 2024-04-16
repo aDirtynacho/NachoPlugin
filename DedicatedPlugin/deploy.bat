@@ -6,7 +6,7 @@ echo Parameters: %*
 set SRC=%~p1
 set NAME=%~2
 
-set TARGET=..\..\..\Torch\DedicatedServer64\Plugins
+set TARGET=D:\
 mkdir %TARGET% >NUL 2>&1
 
 echo.
@@ -18,7 +18,7 @@ echo From %1 to "%TARGET%\"
 copy /y %1 "%TARGET%\"
 
 rem TODO: If your plugin depends on any unsafe C# code, then uncomment the next line:
-rem copy /y "%SRC%\System.Runtime.CompilerServices.Unsafe.dll" "%TARGET%\"
+copy /y "%SRC%\System.Runtime.CompilerServices.Unsafe.dll" "%TARGET%\"
 
 IF %ERRORLEVEL% NEQ 0 GOTO :RETRY
 echo Copying "%SRC%\0Harmony.dll" into "%TARGET%\"
