@@ -75,11 +75,11 @@ namespace NachoPlugin
 
             // Get player promotions
             PromotionLevel playerPromotionLevel = (PromotionLevel)commandHandler.GetPlayerPromotionLevel(sender);
-            Log($"(Command seen:{messageText}");
+            //Log($"(Command seen:{messageText}");
             if (messageText.StartsWith("!"))
             {
                 string command = messageText.Substring(1).ToLower();
-                Log($"{messageText}");
+                //Log($"{messageText}");
                 if (_cooldownManager.CanUseCommand(sender, command))
                 {
                     Log($"{command}");
@@ -220,7 +220,8 @@ namespace NachoPlugin
                     }
                     else
                     {
-                        Log("error");
+                        MyAPIGateway.Utilities.SendMessage("You haven't voted yet!");
+                        Log("User didn't vote");
                     }
 
                 }
@@ -348,6 +349,7 @@ namespace NachoPlugin
                 }
             }
             Log($"Grids found: {grids.Count}");
+            MyAPIGateway.Utilities.SendMessage($"Grids found: {grids.Count}");
             foreach (IMyCubeGrid grid in grids)
             {
                 Log("Checking Distances");
