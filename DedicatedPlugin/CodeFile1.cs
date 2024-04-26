@@ -2,12 +2,15 @@
 using Sandbox.ModAPI;
 using VRage.Game.Components;
 using VRage.Game.ModAPI;
-using Shared.Config;
 using System.Net.Http;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using VRageMath;
 using VRage.ModAPI;
+using Shared.Config;
+using DedicatedPlugin;
+using System.IO;
+using VRage.FileSystem;
 
 // Define the promotion levels
 public enum PromotionLevel
@@ -16,35 +19,134 @@ public enum PromotionLevel
     Admin
 }
 
-
 namespace NachoPlugin
 {
     [MySessionComponentDescriptor(MyUpdateOrder.NoUpdate)]
 
     public class NachoPlugin : MySessionComponentBase
     {
+        // Define a timer to trigger the vote check every 10 minutes
+        private System.Timers.Timer voteCheckTimer;
+
+        // Dictionary to store vote totals for each player
+        Dictionary<ulong, int> voteTotals = new Dictionary<ulong, int>();
+
+        // Property to access voteTotals
+        public Dictionary<ulong, int> VoteTotals
+        {
+            get { return voteTotals; }
+        }
+        // Dictionary to store the last checked time for each player
+        private Dictionary<ulong, DateTime> lastCheckedTimes = new Dictionary<ulong, DateTime>();
+
         private readonly HttpClient _httpClient;
         private readonly string _votingApiUrl;
         private readonly string _claimApiUrl;
+        private readonly string _votecheckApiUrl;
         private readonly CooldownManager _cooldownManager;
-        // Define the default cooldown duration in seconds
-        private const int cooldown = 15;
+
         public NachoPlugin()
         {
-
             _httpClient = new HttpClient();
             _votingApiUrl = "https://space-engineers.com/api/?object=votes&element=claim&key=kLQClxZxOP3q6bVnXpS78EEXc3wKp7YB6m&steamid="; // Replace with actual voting API URL
             _claimApiUrl = "https://space-engineers.com/api/?action=post&object=votes&element=claim&key=kLQClxZxOP3q6bVnXpS78EEXc3wKp7YB6m&steamid=";
-            _cooldownManager = new CooldownManager(TimeSpan.FromSeconds(cooldown));
+            _votecheckApiUrl = "https://space-engineers.com/api/?object=votes&element=claim&key=kLQClxZxOP3q6bVnXpS78EEXc3wKp7YB6m&username=";
+            _cooldownManager = new CooldownManager(TimeSpan.FromSeconds(15));
+            // Initialize the timer with a 10-minute interval
+            voteCheckTimer = new System.Timers.Timer();
+            voteCheckTimer.Interval = TimeSpan.FromMinutes(10).TotalMilliseconds;
+            voteCheckTimer.AutoReset = true; // Set to true to automatically restart the timer after each interval
+            voteCheckTimer.Elapsed += async (sender, e) =>
+            {
+                // Call the vote check method when the timer elapses
+                await CheckAndUpdateVoteTotals();
+            };
+            // Start the timer
+            voteCheckTimer.Start();
+        }
 
 
+        // Method to check players' vote totals and update a local file
+        private async Task CheckAndUpdateVoteTotals()
+        {
+            try
+            {
+                // Loop through each player
+                List<IMyPlayer> players = new List<IMyPlayer>();
+                MyAPIGateway.Players.GetPlayers(players);
+                foreach (IMyPlayer player in players)
+                {
+                    ulong playerId = player.SteamUserId;
+
+                    // Check if the player has been checked today
+                    if (!lastCheckedTimes.ContainsKey(playerId) || (DateTime.Now - lastCheckedTimes[playerId]).TotalDays >= 1)
+                    {
+                        // Update the last checked time for the player
+                        lastCheckedTimes[playerId] = DateTime.Now;
+                        // Send a request to the voting API to get the vote total for the player
+                        string url = $"{_votecheckApiUrl}{playerId}";
+                        HttpResponseMessage response = await _httpClient.GetAsync(url);
+
+                        if (response.IsSuccessStatusCode)
+                        {
+                            string responseBody = await response.Content.ReadAsStringAsync();
+
+
+                            // Assuming the response body contains the vote total
+                            // Modify accordingly if the actual response is different
+                            if (responseBody == "1" || responseBody == "2")
+                            {
+                                voteTotals[playerId] += 1;
+                            }
+                        }
+                        else
+                        {
+                            // Handle error checking vote total
+                            // For now, let's assume if there's an error, the player hasn't voted
+                            voteTotals[playerId] = 0;
+                        }
+                    }
+
+                    // Save the vote totals to a local file
+                    SaveVoteTotalsToFile(voteTotals);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Handle exceptions
+                // For now, let's just log the exception
+                Console.WriteLine($"Error checking and updating vote totals: {ex.Message}");
+            }
+        }
+
+        private void SaveVoteTotalsToFile(Dictionary<ulong, int> voteTotals)
+        {
+            try
+            {
+                // Convert the vote totals dictionary to lines for writing to the file
+                List<string> lines = new List<string>();
+                foreach (var kvp in voteTotals)
+                {
+                    lines.Add($"{kvp.Key},{kvp.Value}");
+                }
+
+                // Write the lines to the file
+                var voteFile = Path.Combine(MyFileSystem.UserDataPath, "VoteTotals.txt");
+                File.WriteAllLines(voteFile, lines);
+            }
+            catch (Exception ex)
+            {
+                // Handle exceptions
+                Console.WriteLine($"Error saving vote totals to file: {ex.Message}");
+            }
         }
 
 
         public override void LoadData()
         {
             base.LoadData();
-
+            // Load vote totals from file when the plugin is loaded
+            LoadVoteTotalsFromFile();
             Log("NachoPlugin has been loaded!");
         }
 
@@ -59,14 +161,71 @@ namespace NachoPlugin
         {
             base.BeforeStart();
             MyAPIGateway.Utilities.MessageRecieved += OnMessageEntered;
+            // Schedule daily vote total check
+            _ = CheckAndUpdateVoteTotals();
             Log("Event listener working?");
         }
+        /*private async void ScheduleDailyVoteTotalCheck()
+        {
+            while (true)
+            {
+                // Wait until next day
+                DateTime nextDay = DateTime.Today.AddDays(1);
+                TimeSpan waitTime = nextDay - DateTime.Now;
+                await Task.Delay(waitTime);
+
+                // Check and update vote totals
+                await CheckAndUpdateVoteTotals();
+            }
+        }*/
         private void Log(string message)
         {
             Console.WriteLine(message); // Log to console
+            
         }
 
+        // Method to get player's username from Steam ID
+        private string GetPlayerNameFromSteamId(ulong steamId)
+        {
+            List<IMyPlayer> players = new List<IMyPlayer>();
+            MyAPIGateway.Players.GetPlayers(players);
 
+            foreach (IMyPlayer player in players)
+            {
+                if (player.SteamUserId == steamId)
+                {
+                    return player.DisplayName;
+                }
+            }
+
+            // Player not found or not loaded
+            return null;
+        }
+
+        // Method to load vote totals from "VoteTotals.txt" file
+        private void LoadVoteTotalsFromFile()
+        {
+            try
+            {
+                // Read the contents of the "VoteTotals.txt" file
+                string[] lines = File.ReadAllLines("VoteTotals.txt");
+
+                // Parse the contents of the file and update the vote totals dictionary
+                foreach (string line in lines)
+                {
+                    string[] parts = line.Split(',');
+                    if (parts.Length == 2 && ulong.TryParse(parts[0], out ulong playerId) && int.TryParse(parts[1], out int voteCount))
+                    {
+                        voteTotals[playerId] = voteCount;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Handle exceptions
+                Console.WriteLine($"Error loading vote totals from file: {ex.Message}");
+            }
+        }
 
         private async void OnMessageEntered(ulong sender, string messageText)
         {
@@ -78,7 +237,7 @@ namespace NachoPlugin
             //Log($"(Command seen:{messageText}");
             if (messageText.StartsWith("!"))
             {
-                string command = messageText.Substring(1).ToLower();
+                string command = messageText.Substring(messageText.IndexOf('!') + 1).ToLower();
                 //Log($"{messageText}");
                 if (_cooldownManager.CanUseCommand(sender, command))
                 {
@@ -113,6 +272,9 @@ namespace NachoPlugin
                                 break;
                             case "omnomnom":
                                 ScanAndDeleteOutOfRangeGrids();
+                                break;
+                            case "vote check":
+                                HandleVoteCheck(sender);
                                 break;
                             default:
                                 Log($"Unknown command: {command}");
@@ -153,10 +315,13 @@ namespace NachoPlugin
 
         private void HandleMotdCommand()
         {
-            PluginConfig pluginConfig = new PluginConfig();
-            // Send a message of the day to the player who entered the command
-            MyAPIGateway.Utilities.SendMessage(pluginConfig.Motd);
             Log("Motd Command Detected");
+            //PluginConfig pluginConfig = new PluginConfig();
+            // Send a message of the day to the player who entered the command
+
+            string motd = Plugin.Instance.Config.Motd;
+            MyAPIGateway.Utilities.SendMessage($"{motd}");
+
         }
 
         private void HandleDiscordCommand()
@@ -165,10 +330,21 @@ namespace NachoPlugin
             MyAPIGateway.Utilities.SendMessage("Join our Discord server at: discord.gg/vnAt8X64ut");
             Log("Discord Command Detected");
         }
+        private bool _isVoteInProgress = false;
         private async Task HandleVoteCommand(ulong sender)
         {
             try
             {
+                // Check if a vote request is already in progress
+                if (_isVoteInProgress)
+                {
+                    MyAPIGateway.Utilities.SendMessage("A vote request is already in progress. Please wait a moment and try again.");
+                    return;
+                }
+
+                // Set the flag to indicate that a vote request is in progress
+                _isVoteInProgress = true;
+
                 // Send a request to the voting API to check if the player has voted
                 string url = $"{_votingApiUrl}{sender}";
                 HttpResponseMessage response = await _httpClient.GetAsync(url);
@@ -197,6 +373,11 @@ namespace NachoPlugin
             catch (Exception ex)
             {
                 MyAPIGateway.Utilities.SendMessage($"Error checking voting status: {ex.Message}");
+            }
+            finally
+            {
+                // Reset the flag once the vote request is complete
+                _isVoteInProgress = false;
             }
         }
         private async Task HandleVoteClaimCommand(ulong sender)
@@ -236,6 +417,29 @@ namespace NachoPlugin
             }
         }
 
+        private void HandleVoteCheck(ulong sender)
+        {
+            // Get the username associated with the sender's Steam ID
+            string playerName = GetPlayerNameFromSteamId(sender);
+
+            if (playerName != null)
+            {
+                // Get the vote total for the sender
+                int voteTotal = 0;
+                if (VoteTotals.ContainsKey(sender))
+                {
+                    voteTotal = VoteTotals[sender];
+                }
+
+                // Print the username and vote total
+                Log($"Player: {playerName}, Vote Total: {voteTotal}");
+            }
+            else
+            {
+                // Unable to retrieve username
+                Log("Unable to retrieve username for sender.");
+            }
+        }
         /*        private void WhisperToPlayer(string playerName, string message)
                 {
                     // Find the player by name
@@ -285,11 +489,12 @@ namespace NachoPlugin
 
         private void HandleBanCommand(ulong sender)
         {
-            PluginConfig pluginConfig = new PluginConfig();
+            //PluginConfig pluginConfig = new PluginConfig();
             long target = MyAPIGateway.Players.TryGetIdentityId(sender);
-            if (target != MyAPIGateway.Players.TryGetIdentityId(steamId: pluginConfig.Admin))
+            if (target != MyAPIGateway.Players.TryGetIdentityId(steamId: Plugin.Instance.Config.Admin))
             {
                 MyAPIGateway.Players.RequestChangeBalance(target, -500);
+                MyAPIGateway.Utilities.SendMessage("oh ho ho no.");
             }
             else
             {
@@ -308,7 +513,7 @@ namespace NachoPlugin
             List<IMyCubeBlock> scrapBeacons = new List<IMyCubeBlock>();
             foreach (IMyEntity entity in entities)
             {
-                Log($"Entity Type: {entity.GetType().Name}");
+                //Log($"Entity Type: {entity.GetType().Name}");
 
                 if (entity is IMyCubeGrid cubeGrid)
                 {
@@ -320,7 +525,7 @@ namespace NachoPlugin
                         if (block.FatBlock is IMyCubeBlock cubeBlock && IsScrapBeacon(cubeBlock))
                         {
                             scrapBeacons.Add(cubeBlock);
-                            Log($"Scrap Beacon found: {cubeBlock.EntityId}");
+                            //Log($"Scrap Beacon found: {cubeBlock.EntityId}");
                         }
                     }
                     /*Log($"Entity is CubeBlock: {cubeBlock.EntityId}");
@@ -404,6 +609,7 @@ namespace NachoPlugin
 
     public class CooldownManager
     {
+
         private readonly Dictionary<(ulong, string), DateTime> _cooldowns = new Dictionary<(ulong, string), DateTime>();
         private readonly TimeSpan _cooldownDuration;
 
