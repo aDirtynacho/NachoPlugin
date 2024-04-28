@@ -17,6 +17,6 @@ namespace Shared.Config
 
         ulong Admin {  get; set; }
 
-
+        int Reward { get; set; }
     }
 }

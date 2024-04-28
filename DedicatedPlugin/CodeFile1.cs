@@ -11,6 +11,11 @@ using Shared.Config;
 using DedicatedPlugin;
 using System.IO;
 using VRage.FileSystem;
+using Sandbox.Game.World;
+using VRage.Scripting;
+using Shared.Logging;
+using VRage.Utils;
+using System.Linq;
 
 // Define the promotion levels
 public enum PromotionLevel
@@ -53,9 +58,11 @@ namespace NachoPlugin
             _votecheckApiUrl = "https://space-engineers.com/api/?object=votes&element=claim&key=kLQClxZxOP3q6bVnXpS78EEXc3wKp7YB6m&username=";
             _cooldownManager = new CooldownManager(TimeSpan.FromSeconds(15));
             // Initialize the timer with a 10-minute interval
-            voteCheckTimer = new System.Timers.Timer();
-            voteCheckTimer.Interval = TimeSpan.FromMinutes(10).TotalMilliseconds;
-            voteCheckTimer.AutoReset = true; // Set to true to automatically restart the timer after each interval
+            voteCheckTimer = new System.Timers.Timer
+            {
+                Interval = TimeSpan.FromMinutes(10).TotalMilliseconds,
+                AutoReset = true // Set to true to automatically restart the timer after each interval
+            };
             voteCheckTimer.Elapsed += async (sender, e) =>
             {
                 // Call the vote check method when the timer elapses
@@ -64,7 +71,7 @@ namespace NachoPlugin
             // Start the timer
             voteCheckTimer.Start();
         }
-
+        
 
         // Method to check players' vote totals and update a local file
         private async Task CheckAndUpdateVoteTotals()
@@ -141,6 +148,24 @@ namespace NachoPlugin
             }
         }
 
+        private long GetPlayerIdentityIdByName(string playerName)
+        {
+            List<IMyPlayer> players = new List<IMyPlayer>();
+            MyAPIGateway.Players.GetPlayers(players);
+
+            // Iterate through players to find the matching name
+            foreach (IMyPlayer player in players)
+            {
+                if (player.DisplayName == playerName)
+                {
+                    // Get the identity ID of the player and return it
+                    return MyAPIGateway.Players.TryGetIdentityId(player.SteamUserId);
+                }
+            }
+
+            // Return 0 if the player with the given name is not found
+            return 0;
+        }
 
         public override void LoadData()
         {
@@ -181,9 +206,24 @@ namespace NachoPlugin
         private void Log(string message)
         {
             Console.WriteLine(message); // Log to console
-            
-        }
 
+            try
+            {
+                // Specify the full path to the log file "NachoLog.txt"
+                var logFile = Path.Combine(MyFileSystem.UserDataPath, "NachoLog.txt");
+
+                // Append the message to the log file or create the file if it doesn't exist
+                using (StreamWriter writer = File.AppendText(logFile))
+                {
+                    writer.WriteLine($"{DateTime.Now} - {message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error writing to log file: {ex.Message}");
+            }
+        }
+        
         // Method to get player's username from Steam ID
         private string GetPlayerNameFromSteamId(ulong steamId)
         {
@@ -200,6 +240,27 @@ namespace NachoPlugin
 
             // Player not found or not loaded
             return null;
+        }
+
+        // Method to get player's username from Steam ID
+        private bool GetPlayerBalance(string identity, out long balance)
+        {
+            List<IMyPlayer> players = new List<IMyPlayer>();
+            MyAPIGateway.Players.GetPlayers(players);
+
+            foreach (IMyPlayer player in players)
+            {
+
+                if (player.DisplayName == identity)
+                {
+                    return player.TryGetBalanceInfo(out balance);
+                }
+            }
+
+            balance = 0;
+
+            // Player not found or not loaded
+            return false;
         }
 
         // Method to load vote totals from "VoteTotals.txt" file
@@ -234,11 +295,17 @@ namespace NachoPlugin
 
             // Get player promotions
             PromotionLevel playerPromotionLevel = (PromotionLevel)commandHandler.GetPlayerPromotionLevel(sender);
-            //Log($"(Command seen:{messageText}");
+
+            // Split the message text by spaces to extract the command
+            string[] messageParts = messageText.Split(' ');
+
+            // Check if the message starts with "!" and has at least one part after splitting
             if (messageText.StartsWith("!"))
             {
-                string command = messageText.Substring(messageText.IndexOf('!') + 1).ToLower();
-                //Log($"{messageText}");
+                // Extract the command from the first part after splitting
+                string command = messageParts[0].Trim().Substring(1).ToLower();
+
+
                 if (_cooldownManager.CanUseCommand(sender, command))
                 {
                     Log($"{command}");
@@ -276,6 +343,38 @@ namespace NachoPlugin
                             case "vote check":
                                 HandleVoteCheck(sender);
                                 break;
+                            case "test":
+                                if (messageParts.Length >= 3)
+                                {
+                                    string setting = messageParts[1].Trim();
+                                    string param = string.Join(" ", messageParts.Skip(2)).Trim();
+                                    TestArea(setting, param);
+                                }
+                                else
+                                {
+                                    Log("Insufficient parameters for changing command");
+                                }
+
+                                break;
+                            case "pay":
+                                // Check if there are enough parameters for the pay command
+                                if (messageParts.Length >= 3)
+                                {
+                                    string recipient = messageParts[1].Trim();
+                                    if (int.TryParse(messageParts[2].Trim(), out int amount))
+                                    {
+                                        HandlePayCommand(sender, recipient, amount);
+                                    }
+                                    else
+                                    {
+                                        Log($"Invalid amount specified for pay command: {messageParts[2].Trim()}");
+                                    }
+                                }
+                                else
+                                {
+                                    Log("Insufficient parameters for pay command");
+                                }
+                                break;
                             default:
                                 Log($"Unknown command: {command}");
                                 break;
@@ -287,6 +386,7 @@ namespace NachoPlugin
                 else
                 {
                     MyAPIGateway.Utilities.SendMessage("You are on cooldown for this command.");
+                    Log($"{sender} is on cooldown");
                     /*string playerName = null;
                     List<IMyPlayer> playerList = new List<IMyPlayer>();
                     MyAPIGateway.Players.GetPlayers(playerList);
@@ -316,9 +416,9 @@ namespace NachoPlugin
         private void HandleMotdCommand()
         {
             Log("Motd Command Detected");
-            //PluginConfig pluginConfig = new PluginConfig();
-            // Send a message of the day to the player who entered the command
 
+            // Send a message of the day
+            //this code here is how we do things
             string motd = Plugin.Instance.Config.Motd;
             MyAPIGateway.Utilities.SendMessage($"{motd}");
 
@@ -355,19 +455,23 @@ namespace NachoPlugin
                     if (responseBody.Contains("1"))
                     {
                         MyAPIGateway.Utilities.SendMessage("You have voted and are ready to claim!");
+                        Log($"{sender} is ready to claim");
                     }
                     else if (responseBody.Contains("0"))
                     {
-                        MyAPIGateway.Utilities.SendMessage("You haven't voted yet!");
+                        MyAPIGateway.Utilities.SendMessage("You haven't voted yet! Check out www.space-engineers.com");
+                        Log($"{sender} is ready to vote");
                     }
                     else if (responseBody.Contains("2"))
                     {
                         MyAPIGateway.Utilities.SendMessage("You have already claimed today!");
+                        Log($"{sender} has claimed today");
                     }
                 }
                 else
                 {
                     MyAPIGateway.Utilities.SendMessage("Error checking voting status.");
+                    Log($"{sender} has encountered an error with checking his daily vote");
                 }
             }
             catch (Exception ex)
@@ -395,8 +499,9 @@ namespace NachoPlugin
                     if (responseBody.Contains("1"))
                     {
                         MyAPIGateway.Utilities.SendMessage("Vote claim successful! You've received your reward.");
+                        Log($"{sender} claimed reward!");
                         long target = MyAPIGateway.Players.TryGetIdentityId(sender);
-                        MyAPIGateway.Players.RequestChangeBalance(target, 10000);
+                        MyAPIGateway.Players.RequestChangeBalance(target, Plugin.Instance.Config.Reward);
 
                     }
                     else
@@ -409,14 +514,61 @@ namespace NachoPlugin
                 else
                 {
                     MyAPIGateway.Utilities.SendMessage("Error claiming vote reward.");
+                    Log("Error claiming");
                 }
             }
             catch (Exception ex)
             {
                 MyAPIGateway.Utilities.SendMessage($"Error claiming vote reward: {ex.Message}");
+                Log("error! this one you gotta tell nacho about");
             }
         }
+        private void HandlePayCommand(ulong sender, string recipient, int amount)
+        {
+            // Get the identity ID of the sender
+            long senderIdentityId = MyAPIGateway.Players.TryGetIdentityId(sender);
+            string senderBank = GetPlayerNameFromSteamId(sender);
 
+            // Check if the sender's identity ID is valid
+            if (senderIdentityId == 0)
+            {
+                Log($"Invalid sender: {sender}");
+                return;
+            }
+
+            if (!GetPlayerBalance(senderBank, out long senderBalance))
+            {
+                Log($"Failed to get balance for sender: {GetPlayerNameFromSteamId(sender)}");
+                return;
+            }
+
+            // Check if the sender has sufficient balance
+            if (senderBalance < amount)
+            {
+                Log($"Insufficient balance for sender: {GetPlayerNameFromSteamId(sender)}");
+                return;
+            }
+
+
+            // Get the identity ID of the recipient
+            long recipientIdentityId = GetPlayerIdentityIdByName(recipient);
+
+
+            // Check if the recipient's identity ID is valid
+            if (recipientIdentityId == 0)
+            {
+                Log($"Invalid recipient: {recipient}");
+                return;
+            }
+
+            MyAPIGateway.Players.RequestChangeBalance(senderIdentityId, -amount);
+            MyAPIGateway.Players.RequestChangeBalance(recipientIdentityId, amount);
+
+
+            // Log the transaction
+            Log($"{senderBank} transferred {amount} to {recipient}");
+        }
+        
         private void HandleVoteCheck(ulong sender)
         {
             // Get the username associated with the sender's Steam ID
@@ -605,6 +757,19 @@ namespace NachoPlugin
             grid.Close();
         }
 
+        private void TestArea(string configsetting, string param)
+        {
+            string test1 = Plugin.Instance.Config.Motd;
+
+            Log($"{test1}");
+            //this is what i need
+            Plugin.Instance.Config.Motd = param;
+            Log($"{test1}");
+            test1 = param;
+
+            Log($"{test1}");
+
+        }
     }
 
     public class CooldownManager
@@ -655,7 +820,8 @@ namespace NachoPlugin
         { "vote", PromotionLevel.Default },
         { "voteclaim", PromotionLevel.Default },
         { "ban", PromotionLevel.Admin },
-        { "omnomnom", PromotionLevel.Admin }
+        { "omnomnom", PromotionLevel.Admin },
+        { "pay", PromotionLevel.Default }
     };
 
         // Check if the player has permission to use a command
