@@ -375,6 +375,15 @@ namespace NachoPlugin
                                     Log("Insufficient parameters for pay command");
                                 }
                                 break;
+                            case "help":
+                            case "commands":
+                                // Get the available commands for the sender
+                                string availableCommands = GetAvailableCommands(sender);
+                                // Log the available commands
+                                Log(availableCommands);
+                                MyAPIGateway.Utilities.SendMessage(availableCommands);
+                                break;
+
                             default:
                                 Log($"Unknown command: {command}");
                                 break;
@@ -404,6 +413,36 @@ namespace NachoPlugin
                 }
             }
         }
+
+        // Method to get the available commands for the sender
+        private string GetAvailableCommands(ulong sender)
+        {
+            CommandHandler commandHandler = new CommandHandler();
+            // Get the promotion level of the sender
+            PromotionLevel senderPerm = (PromotionLevel)commandHandler.GetPlayerPromotionLevel(sender);
+
+            // List to store available commands
+            List<string> availableCommands = new List<string>();
+
+            // Iterate through commands and check permissions
+            foreach (var command in CommandHandler.commandPermissions)
+            {
+                if (senderPerm >= command.Value)
+                {
+                    availableCommands.Add(command.Key);
+                }
+            }
+
+            // Construct message containing available commands
+            string message = "Available commands:\n";
+            foreach (var cmd in availableCommands)
+            {
+                message += $"!{cmd} ";
+            }
+
+            return message;
+        }
+
 
         private void HandlePlayersCommand()
         {
@@ -812,7 +851,7 @@ namespace NachoPlugin
     {
 
         // Define the minimum promotion level required for each command
-        private readonly Dictionary<string, PromotionLevel> commandPermissions = new Dictionary<string, PromotionLevel>
+        public readonly static Dictionary<string, PromotionLevel> commandPermissions = new Dictionary<string, PromotionLevel>
     {
         { "players", PromotionLevel.Default },
         { "motd", PromotionLevel.Default },
@@ -821,7 +860,9 @@ namespace NachoPlugin
         { "voteclaim", PromotionLevel.Default },
         { "ban", PromotionLevel.Admin },
         { "omnomnom", PromotionLevel.Admin },
-        { "pay", PromotionLevel.Default }
+        { "pay", PromotionLevel.Default },
+        { "test", PromotionLevel.Admin }
+
     };
 
         // Check if the player has permission to use a command
