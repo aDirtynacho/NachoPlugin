@@ -35,6 +35,7 @@ namespace Shared.Config
         private string motd = "TESTING THIS SHIT GOD DAMN";
         private int cooldown = 15;
         private ulong admin = 76561198032754201;
+        private int reward = 30000;
         // TODO: Implement your config fields here
         // The default values here will apply to Client and Dedicated.
         // The default values for Torch are defined in TorchPlugin.
@@ -66,6 +67,12 @@ namespace Shared.Config
             get => admin;
             set => SetValue(ref admin, value);
         }
+        public int Reward
+        {
+            get => reward;
+            set => SetValue(ref reward, value);
+        }
+
         // TODO: Encapsulate your config fields as properties here
     }
 }
