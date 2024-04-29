@@ -16,6 +16,7 @@ using VRage.Scripting;
 using Shared.Logging;
 using VRage.Utils;
 using System.Linq;
+using Epic.OnlineServices.Sanctions;
 
 // Define the promotion levels
 public enum PromotionLevel
@@ -383,6 +384,12 @@ namespace NachoPlugin
                                 Log(availableCommands);
                                 MyAPIGateway.Utilities.SendMessage(availableCommands);
                                 break;
+                            case "flex":
+                                HandleFlexCommand(sender);
+                                break;
+                            case "1%":
+                                HandleHiScoreCommand();
+                                break;
 
                             default:
                                 Log($"Unknown command: {command}");
@@ -412,6 +419,30 @@ namespace NachoPlugin
                     Log("Whisper to Player");*/
                 }
             }
+        }
+
+        private void HandleHiScoreCommand()
+        {
+            List<IMyPlayer> players = new List<IMyPlayer>();
+            MyAPIGateway.Players.GetPlayers(players);
+            foreach (IMyPlayer player in players)
+            {
+                if (player != null)
+                {
+                    player.TryGetBalanceInfo(out long cash);
+                    Log(player.DisplayName + cash.ToString());
+                    MyAPIGateway.Utilities.SendMessage(player.DisplayName + cash.ToString());
+                }
+            }
+
+        }
+
+        private void HandleFlexCommand(ulong sender)
+        {
+            string senderID = GetPlayerNameFromSteamId(sender);
+            _ = GetPlayerBalance(senderID, out long senderCash);
+            Log(senderID + senderCash);
+            MyAPIGateway.Utilities.SendMessage($"{senderID}: {senderCash}");
         }
 
         // Method to get the available commands for the sender
