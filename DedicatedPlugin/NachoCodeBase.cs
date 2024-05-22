@@ -17,6 +17,9 @@ using Shared.Logging;
 using VRage.Utils;
 using System.Linq;
 using Epic.OnlineServices.Sanctions;
+using Sandbox.Game.Entities;
+using VRage.Game;
+using Epic.OnlineServices;
 
 // Define the promotion levels
 public enum PromotionLevel
@@ -51,13 +54,14 @@ namespace DedicatedPlugin
         public readonly string _votecheckApiUrl;
         public readonly CooldownManager _cooldownManager;
         public readonly TimeSpan _initialCooldownDuration = TimeSpan.FromSeconds(15);
-
         public string stringPath = Path.Combine(MyFileSystem.UserDataPath, "RandomStrings.txt");
         public static Queue<string> RandomStringQueue = new Queue<string>();
         public static List<string> RandomStrings = new List<string>();
         public static readonly Random RandomGenerator = new Random();
         //this line below this is the OnTimerElapsed beginning, right now with it commented and the Timer.Elapsed += OnTimerElapsed; its disabled, uncomment to re-enable
         //public static readonly Timer Timer = new Timer(TimeSpan.FromMinutes(15).TotalMilliseconds);
+        
+
 
         public NachoPlugin()
         {
@@ -87,7 +91,7 @@ namespace DedicatedPlugin
                 _votecheckApiUrl = "https://space-engineers.com/api/?object=votes&element=claim&key=kLQClxZxOP3q6bVnXpS78EEXc3wKp7YB6m&steamid=";
 
                 _cooldownManager = new CooldownManager(_initialCooldownDuration);
-
+                
             }
             catch (Exception ex)
             {
@@ -300,7 +304,7 @@ namespace DedicatedPlugin
             Log("Event listener working?");
             voteCheckTimer = new System.Timers.Timer
             {
-                Interval = TimeSpan.FromSeconds(20).TotalMilliseconds,
+                Interval = TimeSpan.FromSeconds(600).TotalMilliseconds,
                 AutoReset = true // Set to true to automatically restart the timer after each interval
             };
             voteCheckTimer.Elapsed += async (sender, e) =>
@@ -442,6 +446,23 @@ namespace DedicatedPlugin
             }
         }
 
+        public IMyPlayer GetPlayerBySteamId(ulong steamId)
+        {
+            List<IMyPlayer> players = new List<IMyPlayer>();
+            MyAPIGateway.Players.GetPlayers(players);
+
+            foreach (IMyPlayer player in players)
+            {
+                if (player.SteamUserId == steamId)
+                {
+                    return player;
+                }
+            }
+
+            // Player not found or not loaded
+            return null;
+        }
+
         public async void OnMessageEntered(ulong sender, string messageText)
         {
             // Instantiate CommandHandler
@@ -580,6 +601,9 @@ namespace DedicatedPlugin
                             case "grids":
                                 HandleGridsCommand();
                                 break;
+                            case "power":
+                                HandlePowerCommand(sender);
+                                break;
                             default:
                                 Log($"Unknown command: {command}");
                                 break;
@@ -609,7 +633,105 @@ namespace DedicatedPlugin
                 }
             }
         }
+        public void HandlePowerCommand(ulong senderSteamId)
+        {
+            int PowerCommandCost = Plugin.Instance.Config.PowerCost;
+            // Get the identity ID of the sender
+            long senderIdentityId = MyAPIGateway.Players.TryGetIdentityId(senderSteamId);
+            string senderName = GetPlayerNameFromSteamId(senderSteamId);
 
+            // Check if the sender's identity ID is valid
+            if (senderIdentityId == 0)
+            {
+                Log($"Invalid sender: {senderSteamId}");
+                return;
+            }
+
+            if (senderName == null)
+            {
+                Log($"Player not found: {senderSteamId}");
+                return;
+            }
+
+            if (!GetPlayerBalance(senderName, out long senderBalance))
+            {
+                Log($"Failed to get balance for sender: {senderName}");
+                return;
+            }
+
+            // Check if the sender has sufficient balance
+            if (senderBalance < PowerCommandCost)
+            {
+                Log($"Insufficient balance for sender: {senderName}");
+                Console.WriteLine("Not enough money honey");
+                return;
+            }
+
+            IMyPlayer senderPlayer = GetPlayerBySteamId(senderSteamId);
+            if (senderPlayer == null)
+            {
+                Log($"Player not found: {senderName}");
+                return;
+            }
+
+            var controlledEntity = senderPlayer.Controller.ControlledEntity;
+
+            // Check if the player is controlling a character or ship
+            if (controlledEntity == null)
+            {
+                Log($"Player is not controlling any entity: {senderName}");
+                return;
+            }
+
+            IMyCubeGrid grid = null;
+
+            if (controlledEntity is IMyCharacter character)
+            {
+                IMyShipController shipController = character.Parent as IMyShipController;
+                if (shipController != null)
+                {
+                    grid = shipController.CubeGrid;
+                }
+            }
+            else if (controlledEntity is IMyShipController shipController)
+            {
+                grid = shipController.CubeGrid;
+            }
+
+            if (grid == null)
+            {
+                Log($"Player is not controlling a ship grid: {senderName}");
+                return;
+            }
+
+            // Check if the grid is a small grid
+            if (grid.GridSizeEnum != MyCubeSize.Small)
+            {
+                Log($"Player is not controlling a small grid: {senderName}");
+                Console.WriteLine("Small grids only");
+                return;
+            }
+
+            List<IMyBatteryBlock> batteries = new List<IMyBatteryBlock>();
+            MyAPIGateway.TerminalActionsHelper.GetTerminalSystemForGrid(grid).GetBlocksOfType(batteries);
+
+            if (batteries.Count == 0)
+            {
+                Log($"No batteries found on the grid: {senderName}");
+                Console.WriteLine("No valid batteries found");
+                return;
+            }
+
+            // Deduct the balance
+            MyAPIGateway.Players.RequestChangeBalance(senderIdentityId, -PowerCommandCost);
+
+            // Set the first battery to max power
+            MyBatteryBlock battery = (MyBatteryBlock)batteries[0];
+            battery.CurrentStoredPower = battery.MaxStoredPower;
+
+            Log($"Battery set to max power for player: {senderName}. 10 million credits deducted.");
+            Console.WriteLine("Juiced up");
+        }
         public void HandleRandomCommand()
         {
             // Call the method to manually trigger the timer event and advance to the next random string
@@ -1105,14 +1227,16 @@ namespace DedicatedPlugin
         { "discord", PromotionLevel.Default },
         { "vote", PromotionLevel.Default },
         { "voteclaim", PromotionLevel.Default },
-        { "vote check", PromotionLevel.Default },
+        { "votecheck", PromotionLevel.Default },
         { "ban", PromotionLevel.Admin },
         { "omnomnom", PromotionLevel.Admin },
         { "pay", PromotionLevel.Default },
         { "test", PromotionLevel.Admin },
         { "dur", PromotionLevel.Default },
         { "turnoffpb", PromotionLevel.Admin },
-        { "grids", PromotionLevel.Default }
+        { "grids", PromotionLevel.Default },
+        { "flex", PromotionLevel.Default },
+        { "power", PromotionLevel.Admin }
 
     };
 
