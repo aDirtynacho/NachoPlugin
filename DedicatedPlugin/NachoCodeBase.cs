@@ -20,6 +20,8 @@ using Epic.OnlineServices.Sanctions;
 using Sandbox.Game.Entities;
 using VRage.Game;
 using Epic.OnlineServices;
+using VRage.ObjectBuilders;
+using VRage;
 
 // Define the promotion levels
 public enum PromotionLevel
@@ -463,6 +465,67 @@ namespace DedicatedPlugin
             return null;
         }
 
+
+        public void GivePlayerItem(ulong senderSteamId, string itemType, string itemSubtype, string amountString)
+        {
+
+            // Convert the amount from string to long
+            if (!long.TryParse(amountString, out long amountLong))
+            {
+                Log($"Invalid amount format: {amountString}");
+                return;
+            }
+
+            // Convert long to MyFixedPoint
+            MyFixedPoint amount = (MyFixedPoint)(double)amountLong;
+
+
+            // Get the player by Steam ID using the provided method
+            IMyPlayer senderPlayer = GetPlayerBySteamId(senderSteamId);
+            if (senderPlayer == null)
+            {
+                Log($"Player not found: {senderSteamId}");
+                return;
+            }
+
+            // Get the character entity controlled by the player
+            var controlledEntity = senderPlayer.Controller.ControlledEntity as IMyCharacter;
+            if (controlledEntity == null)
+            {
+                Log($"Player is not controlling a character: {senderSteamId}");
+                return;
+            }
+
+            // Get the player's inventory
+            var inventory = controlledEntity.GetInventory() as IMyInventory;
+            if (inventory == null)
+            {
+                Log($"No inventory found for player: {senderSteamId}");
+                return;
+            }
+
+            // Create the item to be added
+            MyObjectBuilder_Base itemBuilder = MyObjectBuilderSerializer.CreateNewObject(new MyObjectBuilderType(typeof(MyObjectBuilder_Component)), itemSubtype);
+            if (itemBuilder == null)
+            {
+                Log($"Invalid item type or subtype: {itemType}, {itemSubtype}");
+                return;
+            }
+
+            // Create a physical item object
+            var physicalItem = itemBuilder as MyObjectBuilder_PhysicalObject;
+            if (physicalItem == null)
+            {
+                Log($"Could not create physical item: {itemSubtype}");
+                return;
+            }
+
+            // Add the item to the player's inventory
+            inventory.AddItems(amount, physicalItem);
+
+            Log($"Given {amount} of {itemSubtype} to player: {senderSteamId}");
+        }
+
         public async void OnMessageEntered(ulong sender, string messageText)
         {
             // Instantiate CommandHandler
@@ -604,6 +667,17 @@ namespace DedicatedPlugin
                             case "power":
                                 HandlePowerCommand(sender);
                                 break;
+                            case "giveitem":
+                                if (messageParts.Length > 3)
+                                {
+                                    GivePlayerItem(GetSteamIdFromPlayerName(messageParts[1]), "MyObjectBuilder_Component", messageParts[2], messageParts[3]);
+                                }
+                                else
+                                {
+                                    Log($"Not enough Commands for GiveItem:{sender}");
+                                }
+                                break;
+
                             default:
                                 Log($"Unknown command: {command}");
                                 break;
@@ -708,7 +782,7 @@ namespace DedicatedPlugin
             if (grid.GridSizeEnum != MyCubeSize.Small)
             {
                 Log($"Player is not controlling a small grid: {senderName}");
-                Console.WriteLine("Small grids only");
+                MyAPIGateway.Utilities.SendMessage("Small grids only");
                 return;
             }
 
@@ -718,7 +792,7 @@ namespace DedicatedPlugin
             if (batteries.Count == 0)
             {
                 Log($"No batteries found on the grid: {senderName}");
-                Console.WriteLine("No valid batteries found");
+                MyAPIGateway.Utilities.SendMessage("No valid batteries found");
                 return;
             }
 
@@ -730,7 +804,7 @@ namespace DedicatedPlugin
             battery.CurrentStoredPower = battery.MaxStoredPower;
 
             Log($"Battery set to max power for player: {senderName}. 10 million credits deducted.");
-            Console.WriteLine("Juiced up");
+            MyAPIGateway.Utilities.SendMessage("Juiced up");
         }
         public void HandleRandomCommand()
         {
@@ -831,7 +905,8 @@ namespace DedicatedPlugin
             Log("Motd Command Detected");
 
             // Send a message of the day
-            //this code here is how we do things
+            //this code here is how we do things, THIS CALLS THE VAR STORED IN THE FILE, CANNOT CALL THIS WAY UNLESS SERVER IS RUNNING, OTHERWISE THIS CODE-LINK IS NULL
+            //so just honestly don't use it in initializers or in the "Before, After, or Load Data" methods.
             string motd = Plugin.Instance.Config.Motd;
             MyAPIGateway.Utilities.SendMessage($"{motd}");
 
@@ -915,6 +990,7 @@ namespace DedicatedPlugin
                         Log($"{sender} claimed reward!");
                         long target = MyAPIGateway.Players.TryGetIdentityId(sender);
                         MyAPIGateway.Players.RequestChangeBalance(target, Plugin.Instance.Config.Reward);
+                        GivePlayerItem(sender, "MyObjectBuilder_Component", "PowerCell", "10");
 
                     }
                     else
@@ -1236,7 +1312,8 @@ namespace DedicatedPlugin
         { "turnoffpb", PromotionLevel.Admin },
         { "grids", PromotionLevel.Default },
         { "flex", PromotionLevel.Default },
-        { "power", PromotionLevel.Admin }
+        { "power", PromotionLevel.Admin },
+        { "giveitem", PromotionLevel.Admin }
 
     };
 
