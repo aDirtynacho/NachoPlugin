@@ -61,7 +61,7 @@ namespace DedicatedPlugin
         public static List<string> RandomStrings = new List<string>();
         public static readonly Random RandomGenerator = new Random();
         //this line below this is the OnTimerElapsed beginning, right now with it commented and the Timer.Elapsed += OnTimerElapsed; its disabled, uncomment to re-enable
-        //public static readonly Timer Timer = new Timer(TimeSpan.FromMinutes(15).TotalMilliseconds);
+        public static readonly Timer Timer = new Timer(TimeSpan.FromMinutes(15).TotalMilliseconds);
         
 
 
@@ -83,9 +83,7 @@ namespace DedicatedPlugin
                 // Load existing vote totals from the file
                 LoadVoteTotalsFromFile();
 
-                //Timer.Elapsed += OnTimerElapsed;
-                //Timer.AutoReset = true;
-                //Timer.Start();
+
 
                 _httpClient = new HttpClient();
                 _votingApiUrl = "https://space-engineers.com/api/?object=votes&element=claim&key=kLQClxZxOP3q6bVnXpS78EEXc3wKp7YB6m&steamid="; // Replace with actual voting API URL
@@ -272,8 +270,8 @@ namespace DedicatedPlugin
         protected override void UnloadData()
         {
             base.UnloadData();
-            //Timer.Stop();
-            //Timer.Dispose();
+            Timer.Stop();
+            Timer.Dispose();
             voteCheckTimer?.Stop();
             voteCheckTimer?.Dispose();
             Log("NachoPlugin has been unloaded!");
@@ -316,6 +314,9 @@ namespace DedicatedPlugin
             };
             // Start the timer
             voteCheckTimer.Start();
+            Timer.Elapsed += OnTimerElapsed;
+            Timer.AutoReset = true;
+            Timer.Start();
         }
 
         public bool isProcessing = false;
@@ -466,7 +467,7 @@ namespace DedicatedPlugin
         }
 
 
-        public void GivePlayerItem(ulong senderSteamId, string itemType, string itemSubtype, string amountString)
+        public void GivePlayerItem(ulong targetSteamId, string itemType, string itemSubtype, string amountString)
         {
 
             // Convert the amount from string to long
@@ -481,26 +482,39 @@ namespace DedicatedPlugin
 
 
             // Get the player by Steam ID using the provided method
-            IMyPlayer senderPlayer = GetPlayerBySteamId(senderSteamId);
+            IMyPlayer senderPlayer = GetPlayerBySteamId(targetSteamId);
             if (senderPlayer == null)
             {
-                Log($"Player not found: {senderSteamId}");
+                Log($"Player not found: {targetSteamId}");
                 return;
             }
 
-            // Get the character entity controlled by the player
-            var controlledEntity = senderPlayer.Controller.ControlledEntity as IMyCharacter;
+            // Get the character or the entity controlled by the player
+            var controlledEntity = senderPlayer.Controller.ControlledEntity as IMyEntity;
             if (controlledEntity == null)
             {
-                Log($"Player is not controlling a character: {senderSteamId}");
+                Log($"Player is not controlling any entity: {targetSteamId}");
                 return;
             }
 
-            // Get the player's inventory
-            var inventory = controlledEntity.GetInventory() as IMyInventory;
+            // Get the inventory from the controlled entity
+            IMyInventory inventory = null;
+            if (controlledEntity is IMyCharacter character)
+            {
+                inventory = character.GetInventory();
+            }
+            else if (controlledEntity is IMyCockpit cockpit)
+            {
+                inventory = cockpit.GetInventory();
+            }
+            else if (controlledEntity is IMyRemoteControl remoteControl)
+            {
+                inventory = remoteControl.GetInventory();
+            }
+
             if (inventory == null)
             {
-                Log($"No inventory found for player: {senderSteamId}");
+                Log($"No inventory found for controlled entity of player: {targetSteamId}");
                 return;
             }
 
@@ -523,7 +537,7 @@ namespace DedicatedPlugin
             // Add the item to the player's inventory
             inventory.AddItems(amount, physicalItem);
 
-            Log($"Given {amount} of {itemSubtype} to player: {senderSteamId}");
+            Log($"Given {amount} of {itemSubtype} to player: {targetSteamId}");
         }
 
         public async void OnMessageEntered(ulong sender, string messageText)
@@ -562,6 +576,9 @@ namespace DedicatedPlugin
                                 break;
                             case "turnoffpb":
                                 HandleTurnOffPBCommand();
+                                break;
+                            case "turnonpb":
+                                HandleTurnOnPBCommand();
                                 break;
                             case "motd":
                                 HandleMotdCommand();
@@ -614,7 +631,7 @@ namespace DedicatedPlugin
                                 if (messageParts.Length >= 3)
                                 {
                                     string recipient = messageParts[1].Trim();
-                                    if (int.TryParse(messageParts[2].Trim(), out int amount))
+                                    if (long.TryParse(messageParts[2].Trim(), out long amount))
                                     {
                                         HandlePayCommand(sender, recipient, amount);
                                     }
@@ -754,6 +771,7 @@ namespace DedicatedPlugin
             if (controlledEntity == null)
             {
                 Log($"Player is not controlling any entity: {senderName}");
+                MyAPIGateway.Utilities.SendMessage("You must be sitting in a small grid ship");
                 return;
             }
 
@@ -838,6 +856,32 @@ namespace DedicatedPlugin
             MyAPIGateway.Utilities.SendMessage($"Turned off {turnedOffCount} programmable blocks.");
             Log($"Turned off {turnedOffCount} programmable blocks.");
         }
+        public void HandleTurnOnPBCommand()
+        {
+            HashSet<IMyEntity> entities = new HashSet<IMyEntity>();
+            MyAPIGateway.Entities.GetEntities(entities, e => e is IMyCubeGrid);
+
+            int turnedOffCount = 0;
+
+            foreach (IMyCubeGrid grid in entities)
+            {
+                IMyGridTerminalSystem terminalSystem = MyAPIGateway.TerminalActionsHelper.GetTerminalSystemForGrid(grid);
+                if (terminalSystem != null)
+                {
+                    List<IMyProgrammableBlock> programmableBlocks = new List<IMyProgrammableBlock>();
+                    terminalSystem.GetBlocksOfType(programmableBlocks);
+
+                    foreach (IMyProgrammableBlock programmableBlock in programmableBlocks)
+                    {
+                        programmableBlock.Enabled = true;
+                        turnedOffCount++;
+                    }
+                }
+            }
+
+            MyAPIGateway.Utilities.SendMessage($"Turned on {turnedOffCount} programmable blocks.");
+            Log($"Turned on {turnedOffCount} programmable blocks.");
+        }
         public void HandleHiScoreCommand()
         {
             List<IMyPlayer> players = new List<IMyPlayer>();
@@ -847,8 +891,9 @@ namespace DedicatedPlugin
                 if (player != null)
                 {
                     player.TryGetBalanceInfo(out long cash);
+                    string formattedCash = $"{cash:N0} SC";
                     Log(player.DisplayName + cash.ToString());
-                    MyAPIGateway.Utilities.SendMessage($"{player.DisplayName} : {cash}");
+                    MyAPIGateway.Utilities.SendMessage($"{player.DisplayName} : {formattedCash}");
                 }
             }
 
@@ -858,8 +903,10 @@ namespace DedicatedPlugin
         {
             string senderID = GetPlayerNameFromSteamId(sender);
             _ = GetPlayerBalance(senderID, out long senderCash);
-            Log(senderID + senderCash);
-            MyAPIGateway.Utilities.SendMessage($"{senderID}: {senderCash}");
+
+            string formattedSenderCash = $"{senderCash:N0} SC";
+            Log($"{senderID}: {formattedSenderCash}");
+            MyAPIGateway.Utilities.SendMessage($"{senderID}: {formattedSenderCash}");
         }
 
         // Method to get the available commands for the sender
@@ -990,7 +1037,7 @@ namespace DedicatedPlugin
                         Log($"{sender} claimed reward!");
                         long target = MyAPIGateway.Players.TryGetIdentityId(sender);
                         MyAPIGateway.Players.RequestChangeBalance(target, Plugin.Instance.Config.Reward);
-                        GivePlayerItem(sender, "MyObjectBuilder_Component", "PowerCell", "10");
+                        GivePlayerItem(sender, "MyObjectBuilder_Component", "PowerCell", "5");
 
                     }
                     else
@@ -1008,11 +1055,11 @@ namespace DedicatedPlugin
             }
             catch (Exception ex)
             {
-                MyAPIGateway.Utilities.SendMessage($"Error claiming vote reward: {ex.Message}");
+                MyAPIGateway.Utilities.SendMessage($"Error claiming vote reward: {ex.Message} this one you gotta tell nacho about");
                 Log("error! this one you gotta tell nacho about");
             }
         }
-        public void HandlePayCommand(ulong sender, string recipient, int amount)
+        public void HandlePayCommand(ulong sender, string recipient, long amount)
         {
             // Get the identity ID of the sender
             long senderIdentityId = MyAPIGateway.Players.TryGetIdentityId(sender);
@@ -1074,11 +1121,13 @@ namespace DedicatedPlugin
 
                 // Print the username and vote total
                 Log($"Player: {playerName}, Vote Total: {voteTotal}");
+                MyAPIGateway.Utilities.SendMessage($"Player: {playerName}, Vote Total: {voteTotal}");
             }
             else
             {
                 // Unable to retrieve username
                 Log("Unable to retrieve username for sender.");
+                MyAPIGateway.Utilities.SendMessage("Unable to retrieve username or plugin hasn't checked user yet!");
             }
         }
 
@@ -1175,11 +1224,11 @@ namespace DedicatedPlugin
             MyAPIGateway.Utilities.SendMessage($"Grids found: {grids.Count}");
             foreach (IMyCubeGrid grid in grids)
             {
-                Log("Checking Distances");
+                //Log("Checking Distances");
                 // Check if the grid is within range of any Scrap Beacon block
                 if (!IsGridWithinRangeOfScrapBeacon(grid, scrapBeacons))
                 {
-                    Log("Deleting some grid");
+                    //Log("Deleting some grid");
                     // Delete the grid if it's not within range
                     DeleteGrid(grid);
                 }
@@ -1310,9 +1359,10 @@ namespace DedicatedPlugin
         { "test", PromotionLevel.Admin },
         { "dur", PromotionLevel.Default },
         { "turnoffpb", PromotionLevel.Admin },
+        { "turnonpb", PromotionLevel.Admin },
         { "grids", PromotionLevel.Default },
         { "flex", PromotionLevel.Default },
-        { "power", PromotionLevel.Admin },
+        { "power", PromotionLevel.Default },
         { "giveitem", PromotionLevel.Admin }
 
     };
