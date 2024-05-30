@@ -22,6 +22,7 @@ using VRage.Game;
 using Epic.OnlineServices;
 using VRage.ObjectBuilders;
 using VRage;
+using Sandbox.Definitions;
 
 // Define the promotion levels
 public enum PromotionLevel
@@ -38,6 +39,7 @@ namespace DedicatedPlugin
     {
         // Define a timer to trigger the vote check every 10 minutes
         private System.Timers.Timer voteCheckTimer;
+        private System.Timers.Timer cleanupTimer;
 
         // Dictionary to store vote totals for each player
         Dictionary<ulong, int> voteTotals = new Dictionary<ulong, int>();
@@ -317,6 +319,24 @@ namespace DedicatedPlugin
             Timer.Elapsed += OnTimerElapsed;
             Timer.AutoReset = true;
             Timer.Start();
+            cleanupTimer = new System.Timers.Timer
+            {
+                Interval = TimeSpan.FromHours(6).TotalMilliseconds,
+                AutoReset = true
+            };
+            cleanupTimer.Elapsed += CleanupTimer_Elapsed;
+            cleanupTimer.Start();
+
+        }
+
+        private async void CleanupTimer_Elapsed(object sender, ElapsedEventArgs e)
+        {
+            for (int i = 5; i > 0; i--)
+            {
+                MyAPIGateway.Utilities.SendMessage($"Server cleanup in {i} minute{(i > 1 ? "s" : "")}!");
+                await Task.Delay(TimeSpan.FromMinutes(1));
+            }
+            ScanAndDeleteOutOfRangeGrids();
         }
 
         public bool isProcessing = false;
@@ -447,6 +467,46 @@ namespace DedicatedPlugin
                 // Handle exceptions
                 Console.WriteLine($"Error loading vote totals from file: {ex.Message}");
             }
+        }
+
+        // Method to calculate the PCU for a player
+        public long CalculatePlayerPCU(ulong steamId)
+        {
+            long totalPCU = 0;
+            HashSet<IMyEntity> entities = new HashSet<IMyEntity>();
+
+            // Retrieve all entities and filter out the player's grids
+            MyAPIGateway.Entities.GetEntities(entities, entity => entity is IMyCubeGrid);
+
+            foreach (var entity in entities)
+            {
+                var grid = entity as IMyCubeGrid;
+                if (grid != null && grid.BigOwners.Contains((long)steamId))
+                {
+                    totalPCU += GetGridPCU(grid);
+                }
+            }
+
+            return totalPCU;
+        }
+
+        // Method to calculate the PCU of a grid
+        public long GetGridPCU(IMyCubeGrid grid)
+        {
+            long gridPCU = 0;
+            List<IMySlimBlock> blocks = new List<IMySlimBlock>();
+            grid.GetBlocks(blocks);
+
+            foreach (var block in blocks)
+            {
+                var blockDefinition = block.BlockDefinition as MyCubeBlockDefinition;
+                if (blockDefinition != null)
+                {
+                    gridPCU += blockDefinition.PCU;
+                }
+            }
+
+            return gridPCU;
         }
 
         public IMyPlayer GetPlayerBySteamId(ulong steamId)
@@ -905,8 +965,16 @@ namespace DedicatedPlugin
             _ = GetPlayerBalance(senderID, out long senderCash);
 
             string formattedSenderCash = $"{senderCash:N0} SC";
-            Log($"{senderID}: {formattedSenderCash}");
-            MyAPIGateway.Utilities.SendMessage($"{senderID}: {formattedSenderCash}");
+
+            // Calculate the PCU for the sender
+            long senderPCU = CalculatePlayerPCU(sender);
+            string formattedSenderPCU = $"{senderPCU:N0} PCU";
+
+            // Send the message to the player
+            MyAPIGateway.Utilities.SendMessage($"{senderID}: {formattedSenderCash}, PCU: {formattedSenderPCU}");
+
+            // Log the information
+            Log($"{senderID}: {formattedSenderCash}, PCU: {formattedSenderPCU}");
         }
 
         // Method to get the available commands for the sender
