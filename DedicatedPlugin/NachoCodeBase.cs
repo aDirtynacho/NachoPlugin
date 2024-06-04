@@ -23,6 +23,9 @@ using Epic.OnlineServices;
 using VRage.ObjectBuilders;
 using VRage;
 using Sandbox.Definitions;
+using System.Text;
+using Sandbox.Engine.Multiplayer;
+using System.Linq.Expressions;
 
 // Define the promotion levels
 public enum PromotionLevel
@@ -31,7 +34,7 @@ public enum PromotionLevel
     Admin
 }
 
-namespace DedicatedPlugin
+namespace NachoPluginSystem
 {
     [MySessionComponentDescriptor(MyUpdateOrder.NoUpdate)]
 
@@ -51,62 +54,130 @@ namespace DedicatedPlugin
         }
         // Dictionary to store the last checked time for each player
         public Dictionary<ulong, DateTime> lastCheckedTimes = new Dictionary<ulong, DateTime>();
-
-        public readonly HttpClient _httpClient;
-        public readonly string _votingApiUrl;
-        public readonly string _claimApiUrl;
-        public readonly string _votecheckApiUrl;
-        public readonly CooldownManager _cooldownManager;
-        public readonly TimeSpan _initialCooldownDuration = TimeSpan.FromSeconds(15);
+        public HttpClient _httpClient;
+        public string _votingApiUrl;
+        public string _claimApiUrl;
+        public string _votecheckApiUrl;
+        public CooldownManager _cooldownManager;
+        public TimeSpan _initialCooldownDuration = TimeSpan.FromSeconds(15);
         public string stringPath = Path.Combine(MyFileSystem.UserDataPath, "RandomStrings.txt");
         public static Queue<string> RandomStringQueue = new Queue<string>();
         public static List<string> RandomStrings = new List<string>();
         public static readonly Random RandomGenerator = new Random();
         //this line below this is the OnTimerElapsed beginning, right now with it commented and the Timer.Elapsed += OnTimerElapsed; its disabled, uncomment to re-enable
         public static readonly Timer Timer = new Timer(TimeSpan.FromMinutes(15).TotalMilliseconds);
-        
+        public const ushort MESSAGE_ID = 22345;
 
-
+        // Flags to track initialization
+        public bool _fileOperationsInitialized = false;
+        public bool _queuePopulated = false;
+        public bool _voteTotalsLoaded = false;
+        public bool _httpClientInitialized = false;
+        public bool _cooldownManagerInitialized = false;
+        public bool _configurationInitialized = false;
         public NachoPlugin()
         {
             try
             {
-                // Ensure the file exists and load random strings
-                EnsureFileExists(stringPath);
-                LoadRandomStrings(stringPath);
-                ShuffleRandomStrings();
+                InitializeFileOperations();
+                PopulateQueue();
+                LoadVoteTotals();
+                InitializeHttpClient();
+                InitializeCooldownManager();
 
-                // Populate the queue with shuffled strings
-                foreach (var str in RandomStrings)
-                {
-                    RandomStringQueue.Enqueue(str);
-                }
-
-                // Load existing vote totals from the file
-                LoadVoteTotalsFromFile();
-
-
-
-                _httpClient = new HttpClient();
-                _votingApiUrl = "https://space-engineers.com/api/?object=votes&element=claim&key=kLQClxZxOP3q6bVnXpS78EEXc3wKp7YB6m&steamid="; // Replace with actual voting API URL
-                _claimApiUrl = "https://space-engineers.com/api/?action=post&object=votes&element=claim&key=kLQClxZxOP3q6bVnXpS78EEXc3wKp7YB6m&steamid=";
-                _votecheckApiUrl = "https://space-engineers.com/api/?object=votes&element=claim&key=kLQClxZxOP3q6bVnXpS78EEXc3wKp7YB6m&steamid=";
-
-                _cooldownManager = new CooldownManager(_initialCooldownDuration);
-                
             }
             catch (Exception ex)
             {
                 // Handle exceptions
-                Console.WriteLine($"Error initializing NachoPlugin: {ex.Message}");
+                
+                Console.WriteLine($"Error initializing NachoPlugin: {ex.Source},{ex.Message},{ex.TargetSite},{ex.InnerException}");
             }
         }
-        
-        // Method to update the cooldown duration
-        public void UpdateCooldownDuration(TimeSpan newDuration)
+
+        public void InitializeConfiguration()
         {
+            if ( !_configurationInitialized )
+            {
+                UpdateCooldownDuration(Plugin.Instance.Config.Cooldown);
+                _configurationInitialized = true;
+                Log("DID IT WORK????");
+            }
+            else
+            {
+                Log("Hmm error?");
+            }
+
+        }
+        private void InitializeFileOperations()
+        {
+            if (!_fileOperationsInitialized)
+            {
+                EnsureFileExists(stringPath);
+                LoadRandomStrings(stringPath);
+                ShuffleRandomStrings();
+                _fileOperationsInitialized = true;
+            }
+        }
+
+
+        private void PopulateQueue()
+        {
+            if (!_queuePopulated)
+            {
+                foreach (var str in RandomStrings)
+                {
+                    RandomStringQueue.Enqueue(str);
+                }
+                _queuePopulated = true;
+            }
+        }
+
+        private void LoadVoteTotals()
+        {
+            if (!_voteTotalsLoaded)
+            {
+                LoadVoteTotalsFromFile();
+                _voteTotalsLoaded = true;
+            }
+        }
+
+        private void InitializeHttpClient()
+        {
+            if (!_httpClientInitialized)
+            {
+                _httpClient = new HttpClient();
+                _votingApiUrl = "https://space-engineers.com/api/?object=votes&element=claim&key=kLQClxZxOP3q6bVnXpS78EEXc3wKp7YB6m&steamid="; // Replace with actual voting API URL
+                _claimApiUrl = "https://space-engineers.com/api/?action=post&object=votes&element=claim&key=kLQClxZxOP3q6bVnXpS78EEXc3wKp7YB6m&steamid=";
+                _votecheckApiUrl = "https://space-engineers.com/api/?object=votes&element=claim&key=kLQClxZxOP3q6bVnXpS78EEXc3wKp7YB6m&steamid=";
+                _httpClientInitialized = true;
+            }
+        }
+
+        private void InitializeCooldownManager()
+        {
+            if (!_cooldownManagerInitialized)
+            {
+                _cooldownManager = new CooldownManager(_initialCooldownDuration);
+                _cooldownManagerInitialized = true;
+            }
+        }
+
+
+        // Method to update the cooldown duration
+        public bool UpdateCooldownDuration(TimeSpan newDuration)
+        {
+            try
+            {
+                _cooldownManager.CooldownDuration = newDuration;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log($"tits, didn't work{ex.Message}");
+                return false;
+            }
             // Update the cooldown duration for the CooldownManager
-            _cooldownManager.CooldownDuration = newDuration;
+
         }
 
         // Initialize dictionary to track if a player has received a response of 2 today
@@ -321,11 +392,13 @@ namespace DedicatedPlugin
             Timer.Start();
             cleanupTimer = new System.Timers.Timer
             {
-                Interval = TimeSpan.FromHours(6).TotalMilliseconds,
+                Interval = TimeSpan.FromHours(4).TotalMilliseconds,
                 AutoReset = true
-            };
+            };           
             cleanupTimer.Elapsed += CleanupTimer_Elapsed;
             cleanupTimer.Start();
+            MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(MESSAGE_ID, HandleMessage);
+            MyAPIGateway.Session.OnSessionReady += InitializeConfiguration;
 
         }
 
@@ -481,7 +554,7 @@ namespace DedicatedPlugin
             foreach (var entity in entities)
             {
                 var grid = entity as IMyCubeGrid;
-                if (grid != null && grid.BigOwners.Contains((long)steamId))
+                if (grid != null && grid.BigOwners.Contains(GetPlayerIdentityIdByName(GetPlayerNameFromSteamId(steamId))))
                 {
                     totalPCU += GetGridPCU(grid);
                 }
@@ -496,13 +569,18 @@ namespace DedicatedPlugin
             long gridPCU = 0;
             List<IMySlimBlock> blocks = new List<IMySlimBlock>();
             grid.GetBlocks(blocks);
-
+            
             foreach (var block in blocks)
             {
+                
                 var blockDefinition = block.BlockDefinition as MyCubeBlockDefinition;
                 if (blockDefinition != null)
                 {
                     gridPCU += blockDefinition.PCU;
+                }
+                else
+                {
+                    Log("It didn't work");
                 }
             }
 
@@ -641,10 +719,10 @@ namespace DedicatedPlugin
                                 HandleTurnOnPBCommand();
                                 break;
                             case "motd":
-                                HandleMotdCommand();
+                                HandleMotdCommand(sender);
                                 break;
                             case "discord":
-                                HandleDiscordCommand();
+                                HandleDiscordCommand(sender);
                                 break;
                             case "vote":
                                 await HandleVoteCommand(sender);
@@ -712,7 +790,8 @@ namespace DedicatedPlugin
                                 string availableCommands = GetAvailableCommands(sender);
                                 // Log the available commands
                                 Log(availableCommands);
-                                MyAPIGateway.Utilities.SendMessage(availableCommands);
+                                byte[] messageBytes = Encoding.UTF8.GetBytes(availableCommands);
+                                MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, messageBytes, sender);
                                 break;
                             case "flex":
                                 HandleFlexCommand(sender);
@@ -733,7 +812,7 @@ namespace DedicatedPlugin
                                 }
                                 break;
                             case "cooldown":
-                                UpdateCooldownDuration(TimeSpan.FromSeconds(Plugin.Instance.Config.Cooldown));
+                                UpdateCooldownDuration(Plugin.Instance.Config.Cooldown);
                                 break;
                             case "updatevote":
                                 await CheckAndUpdateVoteTotals();
@@ -757,6 +836,8 @@ namespace DedicatedPlugin
 
                             default:
                                 Log($"Unknown command: {command}");
+                                var message = WhisperMessage($"Unknown Command: {command}");
+                                MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
                                 break;
                         }
                     }
@@ -765,25 +846,25 @@ namespace DedicatedPlugin
                 }
                 else
                 {
-                    MyAPIGateway.Utilities.SendMessage("You are on cooldown for this command.");
+                    var message = WhisperMessage("You are on cooldown for this command");
+                    MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
                     Log($"{sender} is on cooldown");
-                    /*string playerName = null;
-                    List<IMyPlayer> playerList = new List<IMyPlayer>();
-                    MyAPIGateway.Players.GetPlayers(playerList);
-                    foreach (IMyPlayer player in playerList)
-                    {
-                        if (player.SteamUserId == sender)
-                        {
-                            playerName = player.DisplayName;
-                            Log(playerName);
-                            break;
-                        }
-                    }
-                    WhisperToPlayer(playerName, messageText);
-                    Log("Whisper to Player");*/
                 }
             }
         }
+        public static byte[] WhisperMessage(string message)
+        {
+            return Encoding.UTF8.GetBytes(message);
+        }
+
+        private void HandleMessage(ushort messageId, byte[] data, ulong senderSteamId, bool reliable)
+        {
+            string message = Encoding.UTF8.GetString(data);
+            MyAPIGateway.Utilities.ShowMessage("Nacho Bot", $"Message from {senderSteamId}: {message}");
+            Log($"{senderSteamId} sent {message}");
+            OnMessageEntered(senderSteamId, message);
+        }
+
         public void HandlePowerCommand(ulong senderSteamId)
         {
             int PowerCommandCost = Plugin.Instance.Config.PowerCost;
@@ -813,8 +894,9 @@ namespace DedicatedPlugin
             // Check if the sender has sufficient balance
             if (senderBalance < PowerCommandCost)
             {
+                var message1 = WhisperMessage("Not enough money honey");
                 Log($"Insufficient balance for sender: {senderName}");
-                Console.WriteLine("Not enough money honey");
+                MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message1, senderSteamId); 
                 return;
             }
 
@@ -830,8 +912,9 @@ namespace DedicatedPlugin
             // Check if the player is controlling a character or ship
             if (controlledEntity == null)
             {
+                var message2 = WhisperMessage("You must be in a small grid ship");
                 Log($"Player is not controlling any entity: {senderName}");
-                MyAPIGateway.Utilities.SendMessage("You must be sitting in a small grid ship");
+                MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message2, senderSteamId);
                 return;
             }
 
@@ -852,6 +935,8 @@ namespace DedicatedPlugin
 
             if (grid == null)
             {
+                var message2 = WhisperMessage("You must be in a small grid ship");
+                MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message2, senderSteamId);
                 Log($"Player is not controlling a ship grid: {senderName}");
                 return;
             }
@@ -859,8 +944,9 @@ namespace DedicatedPlugin
             // Check if the grid is a small grid
             if (grid.GridSizeEnum != MyCubeSize.Small)
             {
+                var message3 = WhisperMessage("Small Grids Only");
                 Log($"Player is not controlling a small grid: {senderName}");
-                MyAPIGateway.Utilities.SendMessage("Small grids only");
+                MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message3, senderSteamId);
                 return;
             }
 
@@ -869,8 +955,9 @@ namespace DedicatedPlugin
 
             if (batteries.Count == 0)
             {
+                var message1 = WhisperMessage("No Valid Batteries Found");
                 Log($"No batteries found on the grid: {senderName}");
-                MyAPIGateway.Utilities.SendMessage("No valid batteries found");
+                MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message1, senderSteamId);
                 return;
             }
 
@@ -882,8 +969,8 @@ namespace DedicatedPlugin
             battery.CurrentStoredPower = battery.MaxStoredPower;
 
             Log($"Battery set to max power for player: {senderName}. 10 million credits deducted.");
-            MyAPIGateway.Utilities.SendMessage("Juiced up");
-        }
+            var message = WhisperMessage("Juiced Up!");
+            MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, senderSteamId);        }
         public void HandleRandomCommand()
         {
             // Call the method to manually trigger the timer event and advance to the next random string
@@ -1015,7 +1102,7 @@ namespace DedicatedPlugin
             MyAPIGateway.Utilities.SendMessage($"Current number of players online: {currentPlayerCount}");
         }
 
-        public void HandleMotdCommand()
+        public void HandleMotdCommand(ulong sender)
         {
             Log("Motd Command Detected");
 
@@ -1023,14 +1110,16 @@ namespace DedicatedPlugin
             //this code here is how we do things, THIS CALLS THE VAR STORED IN THE FILE, CANNOT CALL THIS WAY UNLESS SERVER IS RUNNING, OTHERWISE THIS CODE-LINK IS NULL
             //so just honestly don't use it in initializers or in the "Before, After, or Load Data" methods.
             string motd = Plugin.Instance.Config.Motd;
-            MyAPIGateway.Utilities.SendMessage($"{motd}");
+            var message = WhisperMessage(motd);
+            MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
 
         }
 
-        public void HandleDiscordCommand()
+        public void HandleDiscordCommand(ulong sender)
         {
             // Send the Discord invite link to the player who entered the command
-            MyAPIGateway.Utilities.SendMessage("Join our Discord server at: discord.gg/vnAt8X64ut");
+            var message = WhisperMessage("Come join us on discord at discord.gg/vnAt8X64ut");
+            MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
             Log("Discord Command Detected");
         }
         public bool _isVoteInProgress = false;
@@ -1041,7 +1130,8 @@ namespace DedicatedPlugin
                 // Check if a vote request is already in progress
                 if (_isVoteInProgress)
                 {
-                    MyAPIGateway.Utilities.SendMessage("A vote request is already in progress. Please wait a moment and try again.");
+                    var message = WhisperMessage("Vote request already in progress try again in a moment");
+                    MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
                     return;
                 }
 
@@ -1057,23 +1147,27 @@ namespace DedicatedPlugin
                     string responseBody = await response.Content.ReadAsStringAsync();
                     if (responseBody.Contains("1"))
                     {
-                        MyAPIGateway.Utilities.SendMessage("You have voted and are ready to claim!");
+                        var message = WhisperMessage("You have voted and are ready to claim!");
+                        MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
                         Log($"{sender} is ready to claim");
                     }
                     else if (responseBody.Contains("0"))
                     {
-                        MyAPIGateway.Utilities.SendMessage("You haven't voted yet! Check out www.space-engineers.com");
+                        var message = WhisperMessage("You haven't voted yet! Go to www.space-engineers.com and vote today!");
+                        MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
                         Log($"{sender} is ready to vote");
                     }
                     else if (responseBody.Contains("2"))
                     {
-                        MyAPIGateway.Utilities.SendMessage("You have already claimed today!");
+                        var message = WhisperMessage("You have voted and claimed your reward today already, make sure to vote again to help the server!");
+                        MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
                         Log($"{sender} has claimed today");
                     }
                 }
                 else
                 {
-                    MyAPIGateway.Utilities.SendMessage("Error checking voting status.");
+                    var message = WhisperMessage("There has been an error, please try again in a moment");
+                    MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
                     Log($"{sender} has encountered an error with checking his daily vote");
                 }
             }
@@ -1101,7 +1195,8 @@ namespace DedicatedPlugin
                     string responseBody = await response.Content.ReadAsStringAsync();
                     if (responseBody.Contains("1"))
                     {
-                        MyAPIGateway.Utilities.SendMessage("Vote claim successful! You've received your reward.");
+                        var message = WhisperMessage("Vote reward claimed! Enjoy 5 Power cells!");
+                        MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
                         Log($"{sender} claimed reward!");
                         long target = MyAPIGateway.Players.TryGetIdentityId(sender);
                         MyAPIGateway.Players.RequestChangeBalance(target, Plugin.Instance.Config.Reward);
@@ -1110,14 +1205,16 @@ namespace DedicatedPlugin
                     }
                     else
                     {
-                        MyAPIGateway.Utilities.SendMessage("You haven't voted yet!");
+                        var message = WhisperMessage("You haven't voted yet!");
+                        MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
                         Log("User didn't vote");
                     }
 
                 }
                 else
                 {
-                    MyAPIGateway.Utilities.SendMessage("Error claiming vote reward.");
+                    var message = WhisperMessage("There was an error claiming reward...");
+                    MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
                     Log("Error claiming");
                 }
             }
@@ -1150,6 +1247,8 @@ namespace DedicatedPlugin
             if (senderBalance < amount)
             {
                 Log($"Insufficient balance for sender: {GetPlayerNameFromSteamId(sender)}");
+                var message2 = WhisperMessage("Whoa there, Bank Account ain't got that much...");
+                MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message2, sender);
                 return;
             }
 
@@ -1168,7 +1267,8 @@ namespace DedicatedPlugin
             MyAPIGateway.Players.RequestChangeBalance(senderIdentityId, -amount);
             MyAPIGateway.Players.RequestChangeBalance(recipientIdentityId, amount);
 
-
+            MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, WhisperMessage($"{senderBank} has sent you {amount}"), GetSteamIdFromPlayerName(recipient));
+            MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, WhisperMessage($"You have sent {recipient} {amount}"), sender);
             // Log the transaction
             Log($"{senderBank} transferred {amount} to {recipient}");
         }
@@ -1189,13 +1289,15 @@ namespace DedicatedPlugin
 
                 // Print the username and vote total
                 Log($"Player: {playerName}, Vote Total: {voteTotal}");
-                MyAPIGateway.Utilities.SendMessage($"Player: {playerName}, Vote Total: {voteTotal}");
+                var message = WhisperMessage($"Player: {playerName}, Vote Total: {voteTotal}");
+                MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
             }
             else
             {
                 // Unable to retrieve username
                 Log("Unable to retrieve username for sender.");
-                MyAPIGateway.Utilities.SendMessage("Unable to retrieve username or plugin hasn't checked user yet!");
+                var message = WhisperMessage("Either you voted and the system hasn't seen you yet, or you haven't voted!");
+                MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
             }
         }
 
@@ -1269,7 +1371,7 @@ namespace DedicatedPlugin
                 }
                 else
                 {
-                    Log("No Beacons Found");
+                    //Log("No Beacons Found");
                 }
             }
 

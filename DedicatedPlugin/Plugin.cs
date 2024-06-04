@@ -10,7 +10,8 @@ using VRage.FileSystem;
 using VRage.Game;
 using VRage.Plugins;
 
-namespace DedicatedPlugin
+namespace NachoPluginSystem
+
 {
     // ReSharper disable once UnusedType.Global
     public class Plugin : IPlugin, ICommonPlugin
