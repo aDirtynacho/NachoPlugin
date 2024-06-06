@@ -1,3 +1,4 @@
+using System;
 using System.ComponentModel;
 
 namespace Shared.Config
@@ -13,10 +14,16 @@ namespace Shared.Config
         // TODO: Add config properties here, then extend the implementing classes accordingly
         string Motd {  get; set; }
 
-        int Cooldown {  get; set; }
+        TimeSpan Cooldown {  get; set; }
 
         ulong Admin {  get; set; }
 
         int Reward { get; set; }
+
+        int PowerCost { get; set; }
+
+        string VoteKey { get; set; }
+
+        double Cleanup { get; set; }
     }
 }

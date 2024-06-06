@@ -10,12 +10,13 @@ using VRage.FileSystem;
 using VRage.Game;
 using VRage.Plugins;
 
-namespace DedicatedPlugin
+namespace NachoPluginSystem
+
 {
     // ReSharper disable once UnusedType.Global
     public class Plugin : IPlugin, ICommonPlugin
     {
-        public const string Name = "NachoPlayerTracker";
+        public const string Name = "NachoEssentialPlugin";
         public static Plugin Instance { get; private set; }
 
         public long Tick { get; private set; }

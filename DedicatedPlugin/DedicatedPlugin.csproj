@@ -7,7 +7,7 @@
     <ProjectGuid>{E662F09E-440C-4A53-90CE-96A23FD7785E}</ProjectGuid>
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>DedicatedPlugin</RootNamespace>
+    <RootNamespace>NachoPluginSystem</RootNamespace>
     <AssemblyName>NachoEssentialPlugin</AssemblyName>
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
@@ -522,7 +522,8 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="CodeFile1.cs" />
+    <Compile Include="NachoPluginDiscord.cs" />
+    <Compile Include="NachoCodeBase.cs" />
     <Compile Include="Plugin.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

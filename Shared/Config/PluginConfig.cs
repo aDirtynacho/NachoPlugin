@@ -1,5 +1,6 @@
 #if !TORCH
 
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
@@ -33,9 +34,12 @@ namespace Shared.Config
         private bool enabled = true;
         private bool detectCodeChanges = true;
         private string motd = "TESTING THIS SHIT GOD DAMN";
-        private int cooldown = 15;
+        private TimeSpan cooldown = TimeSpan.FromSeconds(15);
         private ulong admin = 76561198032754201;
         private int reward = 30000;
+        private int powercost = 10000000;
+        private string votekey = "Insert your Voting api key from www.space-engineers.com here";
+        private double cleanup = 4;
         // TODO: Implement your config fields here
         // The default values here will apply to Client and Dedicated.
         // The default values for Torch are defined in TorchPlugin.
@@ -57,7 +61,7 @@ namespace Shared.Config
             get => motd;
             set => SetValue(ref motd, value);
         }
-        public int Cooldown
+        public TimeSpan Cooldown
         {
             get => cooldown;
             set => SetValue(ref cooldown, value);
@@ -71,6 +75,24 @@ namespace Shared.Config
         {
             get => reward;
             set => SetValue(ref reward, value);
+        }
+
+        public int PowerCost
+        {
+            get => powercost;
+            set => SetValue(ref powercost, value);
+        }
+
+        public string VoteKey
+        {
+            get => votekey;
+            set => SetValue(ref votekey, value);
+        }
+
+        public double Cleanup
+        {
+            get => cleanup;
+            set => SetValue(ref cleanup, value);
         }
 
         // TODO: Encapsulate your config fields as properties here

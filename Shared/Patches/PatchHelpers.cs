@@ -8,6 +8,7 @@ using Shared.Logging;
 using Shared.Plugin;
 using Shared.Tools;
 
+
 namespace Shared.Patches
 {
     // ReSharper disable once UnusedType.Global
@@ -70,6 +71,7 @@ namespace Shared.Patches
             // the plugins is loaded (no world is loaded yet)
             // For example:
             //MyPatch.Configure();
+
         }
 
         // Called on every update
