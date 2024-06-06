@@ -27,7 +27,7 @@ public enum PromotionLevel
 
 namespace NachoPluginSystem
 {
-    [MySessionComponentDescriptor(MyUpdateOrder.NoUpdate)]
+    [MySessionComponentDescriptor(MyUpdateOrder.NoUpdate, 500)]
 
     public class NachoPlugin : MySessionComponentBase
     {
@@ -60,7 +60,7 @@ namespace NachoPluginSystem
         //And that will allow "Plugin.Instance.Config.*" to return properly
         public static readonly Timer Timer = new Timer(TimeSpan.FromMinutes(15).TotalMilliseconds);
         public const ushort MESSAGE_ID = 22345;
-        public Timer reboot;
+        public static Timer reboot;
         // Flags to track initialization
         //If you set these to true it will skip those, recommend only disabling, i.e setting to "true", on _configurationInitialized, at this time at 6/4/2024, i haven't tested the others.
         public bool _fileOperationsInitialized = false;
@@ -94,7 +94,8 @@ namespace NachoPluginSystem
             {
                 try
                 {
-                    cleanupTimer.Interval = Plugin.Instance.Config.Cleanup;
+                    cleanupTimer.Interval = TimeSpan.FromHours(Plugin.Instance.Config.Cleanup).TotalMilliseconds;
+                    Log(cleanupTimer.Interval.ToString());
                     UpdateCooldownDuration(Plugin.Instance.Config.Cooldown);
                     _configurationInitialized = true;
                     Log("Configuration Loaded Successfully");
@@ -370,10 +371,12 @@ namespace NachoPluginSystem
         protected override void UnloadData()
         {
             base.UnloadData();
-            Timer.Stop();
-            Timer.Dispose();
+            Timer?.Stop();
+            Timer?.Dispose();
             voteCheckTimer?.Stop();
             voteCheckTimer?.Dispose();
+            cleanupTimer?.Stop();
+            cleanupTimer?.Dispose();
             IsInitialized = false;
             Log("NachoPlugin has been unloaded!");
         }
@@ -405,29 +408,35 @@ namespace NachoPluginSystem
             };           
             cleanupTimer.Elapsed += CleanupTimer_Elapsed;
             cleanupTimer.Start();
+            SetOneOffTimer();
+            MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(MESSAGE_ID, HandleMessage);
+            MyAPIGateway.Session.OnSessionReady += InitializeConfiguration;
+
+        }
+
+        private static void SetOneOffTimer()
+        {
             DateTime now = DateTime.Now;
             DateTime nextTrigger = new DateTime(now.Year, now.Month, now.Day, 1, 19, 0);
+
             if (now > nextTrigger)
             {
                 nextTrigger = nextTrigger.AddDays(1);
             }
+
             double intervalToFirstTrigger = (nextTrigger - now).TotalMilliseconds;
 
             reboot = new Timer(intervalToFirstTrigger);
             reboot.Elapsed += RebootTimer;
             reboot.AutoReset = false; // One-off timer
             reboot.Start();
-            MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(MESSAGE_ID, HandleMessage);
-            MyAPIGateway.Session.OnSessionReady += InitializeConfiguration;
-
         }
-
-        private void RebootTimer(object sender, ElapsedEventArgs e)
+        private static void RebootTimer(object sender, ElapsedEventArgs e)
         {
             RebootWarning();
             reboot.Dispose();
         }
-        public async void RebootWarning()
+        public static async void RebootWarning()
         {
             for (int i = 5; i > 0; i--)
             {
