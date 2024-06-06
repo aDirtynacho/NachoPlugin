@@ -39,6 +39,7 @@ namespace Shared.Config
         private int reward = 30000;
         private int powercost = 10000000;
         private string votekey = "Insert your Voting api key from www.space-engineers.com here";
+        private double cleanup = 4;
         // TODO: Implement your config fields here
         // The default values here will apply to Client and Dedicated.
         // The default values for Torch are defined in TorchPlugin.
@@ -86,6 +87,12 @@ namespace Shared.Config
         {
             get => votekey;
             set => SetValue(ref votekey, value);
+        }
+
+        public double Cleanup
+        {
+            get => cleanup;
+            set => SetValue(ref cleanup, value);
         }
 
         // TODO: Encapsulate your config fields as properties here

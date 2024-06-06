@@ -24,6 +24,6 @@ namespace Shared.Config
 
         string VoteKey { get; set; }
 
-
+        double Cleanup { get; set; }
     }
 }

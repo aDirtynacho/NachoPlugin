@@ -522,6 +522,7 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="NachoPluginDiscord.cs" />
     <Compile Include="NachoCodeBase.cs" />
     <Compile Include="Plugin.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

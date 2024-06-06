@@ -8,24 +8,15 @@ using System.Collections.Generic;
 using System.Timers;
 using VRageMath;
 using VRage.ModAPI;
-using Shared.Config;
 using System.IO;
 using VRage.FileSystem;
-using Sandbox.Game.World;
-using VRage.Scripting;
-using Shared.Logging;
-using VRage.Utils;
 using System.Linq;
-using Epic.OnlineServices.Sanctions;
 using Sandbox.Game.Entities;
 using VRage.Game;
-using Epic.OnlineServices;
 using VRage.ObjectBuilders;
 using VRage;
 using Sandbox.Definitions;
 using System.Text;
-using Sandbox.Engine.Multiplayer;
-using System.Linq.Expressions;
 
 // Define the promotion levels
 public enum PromotionLevel
@@ -43,7 +34,7 @@ namespace NachoPluginSystem
         // Define a timer to trigger the vote check every 10 minutes
         private System.Timers.Timer voteCheckTimer;
         private System.Timers.Timer cleanupTimer;
-
+        public static bool IsInitialized { get; private set; } = false;
         // Dictionary to store vote totals for each player
         Dictionary<ulong, int> voteTotals = new Dictionary<ulong, int>();
 
@@ -65,10 +56,13 @@ namespace NachoPluginSystem
         public static List<string> RandomStrings = new List<string>();
         public static readonly Random RandomGenerator = new Random();
         //this line below this is the OnTimerElapsed beginning, right now with it commented and the Timer.Elapsed += OnTimerElapsed; its disabled, uncomment to re-enable
+        //Additionally, i've learned this is just to construct it, i can call a true configuration of it later in InitializeConfiguration() since its tied to the event OnSessionReady
+        //And that will allow "Plugin.Instance.Config.*" to return properly
         public static readonly Timer Timer = new Timer(TimeSpan.FromMinutes(15).TotalMilliseconds);
         public const ushort MESSAGE_ID = 22345;
-
+        public Timer reboot;
         // Flags to track initialization
+        //If you set these to true it will skip those, recommend only disabling, i.e setting to "true", on _configurationInitialized, at this time at 6/4/2024, i haven't tested the others.
         public bool _fileOperationsInitialized = false;
         public bool _queuePopulated = false;
         public bool _voteTotalsLoaded = false;
@@ -96,16 +90,26 @@ namespace NachoPluginSystem
 
         public void InitializeConfiguration()
         {
-            if ( !_configurationInitialized )
+            if (!_configurationInitialized)
             {
-                UpdateCooldownDuration(Plugin.Instance.Config.Cooldown);
-                _configurationInitialized = true;
-                Log("DID IT WORK????");
+                try
+                {
+                    cleanupTimer.Interval = Plugin.Instance.Config.Cleanup;
+                    UpdateCooldownDuration(Plugin.Instance.Config.Cooldown);
+                    _configurationInitialized = true;
+                    Log("Configuration Loaded Successfully");
+                }
+                catch (Exception ex)
+                {
+                    Log($"Hmm error?{ex.Message}{ex.InnerException}");
+                }
             }
             else
             {
-                Log("Hmm error?");
+                Log("Loading Defaults");
             }
+
+
 
         }
         private void InitializeFileOperations()
@@ -332,23 +336,6 @@ namespace NachoPluginSystem
             return 0;
         }
 
-        public override void LoadData()
-        {
-            base.LoadData();
-            // Load vote totals from file when the plugin is loaded
-            LoadVoteTotalsFromFile();
-            Log("NachoPlugin has been loaded!");
-        }
-
-        protected override void UnloadData()
-        {
-            base.UnloadData();
-            Timer.Stop();
-            Timer.Dispose();
-            voteCheckTimer?.Stop();
-            voteCheckTimer?.Dispose();
-            Log("NachoPlugin has been unloaded!");
-        }
         public static void EnsureFileExists(string filePath)
         {
             if (!File.Exists(filePath))
@@ -370,6 +357,27 @@ namespace NachoPluginSystem
                 Console.WriteLine($"Error loading random strings from file: {ex.Message}");
             }
         }
+
+        public override void LoadData()
+        {
+            base.LoadData();
+            // Load vote totals from file when the plugin is loaded
+            LoadVoteTotalsFromFile();
+            IsInitialized = true;
+            Log("NachoPlugin has been loaded!");
+        }
+
+        protected override void UnloadData()
+        {
+            base.UnloadData();
+            Timer.Stop();
+            Timer.Dispose();
+            voteCheckTimer?.Stop();
+            voteCheckTimer?.Dispose();
+            IsInitialized = false;
+            Log("NachoPlugin has been unloaded!");
+        }
+
         public override void BeforeStart()
         {
             base.BeforeStart();
@@ -397,9 +405,35 @@ namespace NachoPluginSystem
             };           
             cleanupTimer.Elapsed += CleanupTimer_Elapsed;
             cleanupTimer.Start();
+            DateTime now = DateTime.Now;
+            DateTime nextTrigger = new DateTime(now.Year, now.Month, now.Day, 1, 19, 0);
+            if (now > nextTrigger)
+            {
+                nextTrigger = nextTrigger.AddDays(1);
+            }
+            double intervalToFirstTrigger = (nextTrigger - now).TotalMilliseconds;
+
+            reboot = new Timer(intervalToFirstTrigger);
+            reboot.Elapsed += RebootTimer;
+            reboot.AutoReset = false; // One-off timer
+            reboot.Start();
             MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(MESSAGE_ID, HandleMessage);
             MyAPIGateway.Session.OnSessionReady += InitializeConfiguration;
 
+        }
+
+        private void RebootTimer(object sender, ElapsedEventArgs e)
+        {
+            RebootWarning();
+            reboot.Dispose();
+        }
+        public async void RebootWarning()
+        {
+            for (int i = 5; i > 0; i--)
+            {
+                MyAPIGateway.Utilities.SendMessage($"Server will restart in {i} minute{(i > 1 ? "s" : "")}!");
+                await Task.Delay(TimeSpan.FromMinutes(1));
+            }
         }
 
         private async void CleanupTimer_Elapsed(object sender, ElapsedEventArgs e)
