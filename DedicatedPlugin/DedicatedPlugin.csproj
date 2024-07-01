@@ -108,7 +108,7 @@
       <HintPath>..\Torch\DedicatedServer64\SixLabors.ImageSharp.dll</HintPath>
     </Reference>
     <Reference Include="SpaceEngineers.Game, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null">
-      <HintPath>..\Torch\DedicatedServer64\SpaceEngineers.Game.dll</HintPath>
+      <HintPath>..\Bin64\SpaceEngineers.Game.dll</HintPath>
     </Reference>
     <Reference Include="SpaceEngineers.ObjectBuilders, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null">
       <HintPath>..\Torch\DedicatedServer64\SpaceEngineers.ObjectBuilders.dll</HintPath>
@@ -522,6 +522,8 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="NachoShop.cs" />
+    <Compile Include="NachoTracker.cs" />
     <Compile Include="NachoPluginDiscord.cs" />
     <Compile Include="NachoCodeBase.cs" />
     <Compile Include="Plugin.cs" />

@@ -17,6 +17,10 @@ using VRage.ObjectBuilders;
 using VRage;
 using Sandbox.Definitions;
 using System.Text;
+using System.Security.Cryptography.X509Certificates;
+using System.Configuration;
+using System.Runtime.InteropServices;
+using VRage.Voxels;
 
 // Define the promotion levels
 public enum PromotionLevel
@@ -69,6 +73,8 @@ namespace NachoPluginSystem
         public bool _httpClientInitialized = false;
         public bool _cooldownManagerInitialized = false;
         public bool _configurationInitialized = false;
+        public int viewdistance = 0;
+        public NachoTracker nachoTracker = new NachoTracker();
         public NachoPlugin()
         {
             try
@@ -92,8 +98,10 @@ namespace NachoPluginSystem
         {
             if (!_configurationInitialized)
             {
+                
                 try
                 {
+                    viewdistance = nachoTracker.clients.ViewDistance;
                     cleanupTimer.Interval = TimeSpan.FromHours(Plugin.Instance.Config.Cleanup).TotalMilliseconds;
                     Log(cleanupTimer.Interval.ToString());
                     UpdateCooldownDuration(Plugin.Instance.Config.Cooldown);
@@ -337,6 +345,59 @@ namespace NachoPluginSystem
             return 0;
         }
 
+        public IMyPlayer GetPlayerByName(string playerName)
+        {
+            List<IMyPlayer> players = new List<IMyPlayer>();
+            MyAPIGateway.Players.GetPlayers(players);
+
+            // Iterate through players to find the matching name and return the player object
+            foreach (IMyPlayer player in players)
+            {
+                if (player.DisplayName == playerName)
+                {
+                    return player;
+                }
+            }
+
+            // Return null if the player with the given name is not found
+            return null;
+        }
+
+        public float GetPlayerInventoryVolume(IMyPlayer player)
+        {
+            if (player != null)
+            {
+                var character = player.Character;
+                if (character != null)
+                {
+                    var inventory = character.GetInventory() as IMyInventory;
+                    if (inventory != null)
+                    {
+                        return (float)inventory.CurrentVolume;
+                    }
+                }
+            }
+            return 0f;
+        }
+
+        public float GetPlayerMaxInventoryVolume(IMyPlayer player)
+        {
+            if (player != null)
+            {
+                var character = player.Character;
+                if (character != null)
+                {
+                    var inventory = character.GetInventory() as IMyInventory;
+                    if (inventory != null)
+                    {
+                        return (float)inventory.MaxVolume;
+                    }
+                }
+            }
+            return 0f;
+        }
+
+
         public static void EnsureFileExists(string filePath)
         {
             if (!File.Exists(filePath))
@@ -485,7 +546,7 @@ namespace NachoPluginSystem
         public static void Log(string message)
         {
             Console.WriteLine(message); // Log to console
-
+            
             try
             {
                 // Specify the full path to the log file "NachoLog.txt"
@@ -596,8 +657,7 @@ namespace NachoPluginSystem
 
             foreach (var entity in entities)
             {
-                var grid = entity as IMyCubeGrid;
-                if (grid != null && grid.BigOwners.Contains(GetPlayerIdentityIdByName(GetPlayerNameFromSteamId(steamId))))
+                if (entity is IMyCubeGrid grid && grid.BigOwners.Contains(GetPlayerIdentityIdByName(GetPlayerNameFromSteamId(steamId))))
                 {
                     totalPCU += GetGridPCU(grid);
                 }
@@ -615,9 +675,7 @@ namespace NachoPluginSystem
             
             foreach (var block in blocks)
             {
-                
-                var blockDefinition = block.BlockDefinition as MyCubeBlockDefinition;
-                if (blockDefinition != null)
+                if (block.BlockDefinition is MyCubeBlockDefinition blockDefinition)
                 {
                     gridPCU += blockDefinition.PCU;
                 }
@@ -650,7 +708,6 @@ namespace NachoPluginSystem
 
         public void GivePlayerItem(ulong targetSteamId, string itemType, string itemSubtype, string amountString)
         {
-
             // Convert the amount from string to long
             if (!long.TryParse(amountString, out long amountLong))
             {
@@ -671,8 +728,7 @@ namespace NachoPluginSystem
             }
 
             // Get the character or the entity controlled by the player
-            var controlledEntity = senderPlayer.Controller.ControlledEntity as IMyEntity;
-            if (controlledEntity == null)
+            if (!(senderPlayer.Controller.ControlledEntity is IMyEntity controlledEntity))
             {
                 Log($"Player is not controlling any entity: {targetSteamId}");
                 return;
@@ -708,8 +764,7 @@ namespace NachoPluginSystem
             }
 
             // Create a physical item object
-            var physicalItem = itemBuilder as MyObjectBuilder_PhysicalObject;
-            if (physicalItem == null)
+            if (!(itemBuilder is MyObjectBuilder_PhysicalObject physicalItem))
             {
                 Log($"Could not create physical item: {itemSubtype}");
                 return;
@@ -876,7 +931,9 @@ namespace NachoPluginSystem
                                     Log($"Not enough Commands for GiveItem:{sender}");
                                 }
                                 break;
-
+                            case "scrapit":
+                                CheckPlayerLogin(messageParts[1], sender);
+                                break;
                             default:
                                 Log($"Unknown command: {command}");
                                 var message = WhisperMessage($"Unknown Command: {command}");
@@ -906,6 +963,44 @@ namespace NachoPluginSystem
             MyAPIGateway.Utilities.ShowMessage("Nacho Bot", $"Message from {senderSteamId}: {message}");
             Log($"{senderSteamId} sent {message}");
             OnMessageEntered(senderSteamId, message);
+        }
+
+        public void CheckPlayerLogin(string playerName, ulong sender)
+        {
+            try
+            {
+                // Ensure the path to the player names file
+                var playerFile = Path.Combine(MyFileSystem.UserDataPath, "PlayerSteamIDandNames.txt");
+                if (File.Exists(playerFile))
+                {
+                    var existingLines = File.ReadAllLines(playerFile);
+                    // Parse existing lines and search for the player name
+                    foreach (var line in existingLines)
+                    {
+                        var parts = line.Split(',');
+                        if (parts.Length == 3 && parts[1].Equals(playerName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            string lastSeen = parts[2];
+                            MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, WhisperMessage($"Player {playerName} was last seen at {lastSeen}"), sender);
+                            Console.WriteLine($"Player {playerName} was last seen at {lastSeen}");
+                            return;
+                        }
+                    }
+                    var message1 = WhisperMessage($"Player {playerName} not found.");
+                    MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message1, sender);
+                    Console.WriteLine($"Player {playerName} was not found");
+                }
+                else
+                {
+                    Console.WriteLine("Player data file does not exist.");
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log errors
+                Console.WriteLine($"Error checking player login: {ex.Message}");
+                MyAPIGateway.Utilities.SendMessage("error");
+            }
         }
 
         public void HandlePowerCommand(ulong senderSteamId)
@@ -965,8 +1060,7 @@ namespace NachoPluginSystem
 
             if (controlledEntity is IMyCharacter character)
             {
-                IMyShipController shipController = character.Parent as IMyShipController;
-                if (shipController != null)
+                if (character.Parent is IMyShipController shipController)
                 {
                     grid = shipController.CubeGrid;
                 }
@@ -1027,7 +1121,7 @@ namespace NachoPluginSystem
 
             int turnedOffCount = 0;
 
-            foreach (IMyCubeGrid grid in entities)
+            foreach (IMyCubeGrid grid in entities.Cast<IMyCubeGrid>())
             {
                 IMyGridTerminalSystem terminalSystem = MyAPIGateway.TerminalActionsHelper.GetTerminalSystemForGrid(grid);
                 if (terminalSystem != null)
@@ -1053,7 +1147,7 @@ namespace NachoPluginSystem
 
             int turnedOffCount = 0;
 
-            foreach (IMyCubeGrid grid in entities)
+            foreach (IMyCubeGrid grid in entities.Cast<IMyCubeGrid>())
             {
                 IMyGridTerminalSystem terminalSystem = MyAPIGateway.TerminalActionsHelper.GetTerminalSystemForGrid(grid);
                 if (terminalSystem != null)
@@ -1161,7 +1255,7 @@ namespace NachoPluginSystem
         public void HandleDiscordCommand(ulong sender)
         {
             // Send the Discord invite link to the player who entered the command
-            var message = WhisperMessage("Come join us on discord at discord.gg/vnAt8X64ut");
+            var message = WhisperMessage("Come join us on discord at discord.gg/vnAt8X64ut. Use $ to chat with players in discord!");
             MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
             Log("Discord Command Detected");
         }
@@ -1423,6 +1517,8 @@ namespace NachoPluginSystem
             {
                 Log($"Found {pair.Value} entities of type {pair.Key}");
             }
+            int staticGridCount = 0;
+            int dynamicGridCount = 0;
 
             // Retrieve all grids
             List<IMyCubeGrid> grids = new List<IMyCubeGrid>();
@@ -1431,10 +1527,22 @@ namespace NachoPluginSystem
                 if (entity is IMyCubeGrid grid)
                 {
                     grids.Add(grid);
+                    if (grid.IsStatic)
+                    {
+                        staticGridCount++;
+                    }
+                    else
+                    {
+                        dynamicGridCount++;
+                    }
                 }
             }
             Log($"Grids found: {grids.Count}");
+            Log($"Static Grids (Non Sim Speed Killing){staticGridCount}");
+            Log($"Dynamic Grids (Sim Speed Killers){dynamicGridCount}");
             MyAPIGateway.Utilities.SendMessage($"Grids found: {grids.Count}");
+            MyAPIGateway.Utilities.SendMessage($"Static Grids (Non Sim Speed Killing){staticGridCount}");
+            MyAPIGateway.Utilities.SendMessage($"Dynamic Grids (Sim Speed Killers){dynamicGridCount}");
             foreach (IMyCubeGrid grid in grids)
             {
                 //Log("Checking Distances");
@@ -1477,6 +1585,7 @@ namespace NachoPluginSystem
 
             // If no Scrap Beacon block is within range, return false
             return false;
+            
         }
 
         public void DeleteGrid(IMyCubeGrid grid)
@@ -1488,27 +1597,179 @@ namespace NachoPluginSystem
         public void HandleGridsCommand()
         {
             HashSet<IMyEntity> entities = new HashSet<IMyEntity>();
+            List<IMyCubeGrid> grids1 = new List<IMyCubeGrid>();
             MyAPIGateway.Entities.GetEntities(entities, e => e is IMyCubeGrid);
-
+            int staticGridCount = 0;
+            int dynamicGridCount = 0;
             int gridCount = entities.Count;
+            foreach (IMyEntity entity in entities)
+            {
+                if (entity is IMyCubeGrid grid)
+                {
+                    grids1.Add(grid);
+                    if (grid.IsStatic)
+                    {
+                        staticGridCount++;
+                    }
+                    else
+                    {
+                        dynamicGridCount++;
+                    }
+                }
+            }
             MyAPIGateway.Utilities.SendMessage($"Total number of grids: {gridCount}");
+            MyAPIGateway.Utilities.SendMessage($"Static Grids (Non Sim Speed Killing){staticGridCount}");
+            MyAPIGateway.Utilities.SendMessage($"Dynamic Grids (Sim Speed Killers){dynamicGridCount}");
             Log($"Total number of grids: {gridCount}");
+            
+            
         }
-
+       
         public void TestArea(string configsetting, string param)
         {
-            string test1 = Plugin.Instance.Config.Motd;
-
-            Log($"{test1}");
-            //this is what i need
-            Plugin.Instance.Config.Motd = param;
-            Log($"{test1}");
-            test1 = param;
-
-            Log($"{test1}");
+            var paramdistance = int.Parse(param);
+            Log($"{viewdistance}");
+            if ( param == null || paramdistance != viewdistance)
+            {
+                MyAPIGateway.Utilities.SendMessage($"{viewdistance}");
+                viewdistance = paramdistance;
+                MyAPIGateway.Utilities.SendMessage($"{viewdistance}");
+                
+            }
 
         }
+
     }
+
+    /* public class MyVoxelManager
+    {
+        private const double StepSize = 256.0; // Increased step size for better performance
+
+        // Entry point for resetting voxels
+        public void ResetVoxelsExceptNearGrids()
+        {
+            // Retrieve all voxel maps in the world
+            var voxelMaps = new List<IMyVoxelBase>();
+            MyAPIGateway.Session.VoxelMaps.GetInstances(voxelMaps);
+
+            // Output the number and names of voxel maps
+            Console.WriteLine($"Number of voxel maps: {voxelMaps.Count}");
+            foreach (var voxelMap in voxelMaps)
+            {
+                Console.WriteLine($"Voxel map: {voxelMap.StorageName}");
+            }
+
+            // Retrieve all entities in the world and filter for grids
+            var entities = new HashSet<IMyEntity>();
+            MyAPIGateway.Entities.GetEntities(entities, e => e is IMyCubeGrid);
+            var grids = new List<IMyCubeGrid>();
+            foreach (var entity in entities)
+            {
+                if (entity is IMyCubeGrid grid)
+                {
+                    grids.Add(grid);
+                }
+            }
+
+            // Process each voxel map in parallel
+            Parallel.ForEach(voxelMaps, voxelMap =>
+            {
+                foreach (var grid in grids)
+                {
+                    // Get the bounding box of the grid and define a safe distance
+                    var gridBoundingBox = grid.WorldAABB;
+                    float safeDistance = 100f; // Adjust this distance as needed
+                    var safeZone = gridBoundingBox.Inflate(safeDistance);
+
+                    // Reset modified voxels outside the safe zone
+                    ResetModifiedVoxels(voxelMap, safeZone);
+                }
+
+                // Output a message when a voxel map is finished processing
+                Console.WriteLine($"Finished processing voxel map: {voxelMap.StorageName}");
+            });
+        }
+
+        // Method to reset modified voxels in a voxel map outside the specified safe zone
+        private void ResetModifiedVoxels(IMyVoxelBase voxelMap, BoundingBoxD safeZone)
+        {
+            // Get the voxel map's bounding box
+            var voxelBoundingBox = voxelMap.WorldAABB;
+
+            // Iterate through the voxel map and reset modified voxels outside the safe zone
+            Parallel.For((int)voxelBoundingBox.Min.X, (int)voxelBoundingBox.Max.X, x =>
+            {
+                for (double y = voxelBoundingBox.Min.Y; y <= voxelBoundingBox.Max.Y; y += StepSize)
+                {
+                    for (double z = voxelBoundingBox.Min.Z; z <= voxelBoundingBox.Max.Z; z += StepSize)
+                    {
+                        var voxelPos = new Vector3D(x, y, z);
+
+                        if (safeZone.Contains(voxelPos) == ContainmentType.Disjoint)
+                        {
+                            // Check if the voxel has been modified
+                            if (IsVoxelModified(voxelMap, voxelPos))
+                            {
+                                // Reset the modified voxel at this position
+                                var localPos = Vector3D.Transform(voxelPos, voxelMap.PositionComp.WorldMatrixInvScaled);
+                                ResetVoxel(voxelMap, localPos);
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Placeholder method to check if a voxel has been modified
+        private bool IsVoxelModified(IMyVoxelBase voxelMap, Vector3D voxelPos)
+        {
+            var storage = voxelMap.Storage;
+
+            // Define a small region around the voxel position
+            Vector3I min = Vector3I.Floor(voxelPos);
+            Vector3I max = min + 100;
+
+            var data = new MyStorageData();
+            data.Resize(min, max);
+
+            // Read the voxel data
+            storage.ReadRange(data, MyStorageDataTypeFlags.Content, 0, min, max);
+
+            // Check if the voxel content is different from the baseline (e.g., default value of 0 or a predefined value)
+            byte baselineContent = 0; // Assuming 0 as the baseline content value
+            for (int i = 0; i < data.SizeLinear; i++)
+            {
+                if (data.Content(i) != baselineContent)
+                {
+                    return true; // Voxel is modified
+                }
+            }
+            return false; // Voxel is not modified
+        }
+
+        // Method to reset a voxel at a given local position
+        private void ResetVoxel(IMyVoxelBase voxelMap, Vector3D localPos)
+        {
+            var storage = voxelMap.Storage;
+
+            // Define a small region around the local position
+            Vector3I min = Vector3I.Floor(localPos);
+            Vector3I max = min + 100;
+
+            var data = new MyStorageData();
+            data.Resize(min, max);
+
+            // Reset the voxel content to the baseline value (e.g., 0)
+            byte baselineContent = 0; // Assuming 0 as the baseline content value
+            for (int i = 0; i < data.SizeLinear; i++)
+            {
+                data.Content(i, baselineContent);
+            }
+
+            // Write the reset voxel data back to the storage
+            storage.WriteRange(data, MyStorageDataTypeFlags.Content, min, max);
+        }
+    } */
 
     public class CooldownManager
     {
