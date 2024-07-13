@@ -11,6 +11,8 @@ using VRage.Game.ModAPI;
 using VRage.ModAPI;
 using System.IO;
 using System.Text;
+using System.Xml.Serialization;
+using VRage.FileSystem;
 
 namespace NachoPluginSystem
 {
@@ -27,13 +29,10 @@ namespace NachoPluginSystem
         {
             if (MyAPIGateway.Multiplayer.IsServer)
             {
-                // Initialize the shop items
-                shopItems = new Dictionary<string, ShopItem>
-            {
-                { "SteelPlate", new ShopItem { Name = "Steel Plates", Price = 10000, Subtype = "SteelPlate" , Type = "Component"} },
-                { "PowerCell", new ShopItem { Name = "Power Cells", Price = 20000, Subtype = "PowerCell" , Type = "Component" } },
-                { "SolarCell", new ShopItem { Name = "Solar Cells", Price = 30000, Subtype = "SolarCell" , Type = "Component" } }
-            };
+                shopItems = new Dictionary<string, ShopItem>();
+
+                // Load shop items from XML file
+                LoadShopItemsFromXML();
 
                 MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(ServerCommunicationId, OnMessageReceived);
                 Console.WriteLine("ServerShopHandler", "Server shop handler initialized.");
@@ -63,6 +62,12 @@ namespace NachoPluginSystem
                 Console.WriteLine(request);
                 if (request == "RequestItems")
                 {
+                    LoadShopItemsFromXML();
+                    NachoPlugin.Log("Shop items reloaded:");
+                    foreach (var item in shopItems)
+                    {
+                        NachoPlugin.Log($"Item: {item.Key}, Name: {item.Value.Name}, Price: {item.Value.Price}, Subtype: {item.Value.Subtype}, Type: {item.Value.Type}");
+                    }
                     // Prepare the item list
                     var itemList = shopItems.Values.ToList();
                     string itemListJson = MyAPIGateway.Utilities.SerializeToXML(itemList);
@@ -82,14 +87,13 @@ namespace NachoPluginSystem
             }
             catch (Exception ex)
             {
-                MyAPIGateway.Utilities.ShowMessage("ServerShopHandler", $"Error in OnMessageReceived: {ex.Message}");
+                NachoPlugin.Log($"Error in OnMessageReceived: {ex.Message}");
             }
         }
 
         private void HandlePurchaseRequest(ulong senderId, string itemTypes, string itemName, ulong quantity, ulong totalCost)
         {
             NachoPlugin.Log(itemName);
-            Console.WriteLine(itemName);
             try
             {
                 // Validate the item
@@ -162,10 +166,72 @@ namespace NachoPluginSystem
             }
             catch (Exception ex)
             {
-                MyAPIGateway.Utilities.ShowMessage("ServerShopHandler", $"Error in HandlePurchaseRequest: {ex.Message}");
+                NachoPlugin.Log($"Error in HandlePurchaseRequest: {ex.Message}");
+            }
+        }
+        private void LoadShopItemsFromXML()
+        {
+            try
+            {
+                string filePath = Path.Combine(MyFileSystem.UserDataPath, "ShopItems.xml");
+                if (File.Exists(filePath))
+                {
+                    using (StreamReader reader = new StreamReader(filePath, Encoding.UTF8))
+                    {
+                        XmlSerializer serializer = new XmlSerializer(typeof(ShopItems));
+                        ShopItems items = (ShopItems)serializer.Deserialize(reader);
+                        shopItems = items.Items.ToDictionary(item => item.Subtype, item => item);
+                    }
+                }
+                else
+                {
+                    NachoPlugin.Log( "ShopItems.xml not found.");
+                    CreateDefaultShopItemsXML(filePath);
+                }
+            }
+            catch (Exception ex)
+            {
+                NachoPlugin.Log($"Error loading shop items from XML: {ex.Message}");
+            }
+        }
+
+        public void ReloadShopItems()
+        {
+            LoadShopItemsFromXML();
+            NachoPlugin.Log("Reloaded Shop Items!");
+        }
+
+        private void CreateDefaultShopItemsXML(string filePath)
+        {
+            try
+            {
+                ShopItems defaultItems = new ShopItems
+                {
+                    Items = new List<ShopItem>
+                    {
+                        new ShopItem { Name = "Steel Plates", Price = 10000, Subtype = "SteelPlate", Type = "Component" },
+                        new ShopItem { Name = "Power Cells", Price = 20000, Subtype = "PowerCell", Type = "Component" },
+                        new ShopItem { Name = "Solar Cells", Price = 30000, Subtype = "SolarCell", Type = "Component" },
+                        new ShopItem { Name = "Large Grid", Price = 100000, Subtype = "MetalGrid", Type = "Component" },
+                        new ShopItem { Name = "Large Tube", Price = 100000, Subtype = "LargeTube", Type = "Component" }
+                    }
+                };
+
+                using (StreamWriter writer = new StreamWriter(filePath, false, Encoding.UTF8))
+                {
+                    XmlSerializer serializer = new XmlSerializer(typeof(ShopItems));
+                    serializer.Serialize(writer, defaultItems);
+                }
+
+                NachoPlugin.Log("Default ShopItems.xml created.");
+            }
+            catch (Exception ex)
+            {
+                NachoPlugin.Log($"Error creating default shop items XML: {ex.Message}");
             }
         }
     }
+
     public class ComponentVolumeHelper
     {
         public static float GetComponentVolume(string componentName)
@@ -223,5 +289,11 @@ namespace NachoPluginSystem
         public ulong Quantity { get; set; }
         public ulong TotalCost { get; set; }
         public string Type { get; set; }
+    }
+    [XmlRoot("ShopItems")]
+    public class ShopItems
+    {
+        [XmlElement("ShopItem")]
+        public List<ShopItem> Items { get; set; }
     }
 }

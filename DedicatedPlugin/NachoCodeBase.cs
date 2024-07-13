@@ -21,6 +21,9 @@ using System.Security.Cryptography.X509Certificates;
 using System.Configuration;
 using System.Runtime.InteropServices;
 using VRage.Voxels;
+using VRage.Game.ObjectBuilders.Components;
+using VRage.Game.ObjectBuilders.Definitions;
+using Sandbox.Game.Entities.Blocks;
 
 // Define the promotion levels
 public enum PromotionLevel
@@ -75,6 +78,8 @@ namespace NachoPluginSystem
         public bool _configurationInitialized = false;
         public int viewdistance = 0;
         public NachoTracker nachoTracker = new NachoTracker();
+        public ServerShopHandler shopHandler = new ServerShopHandler();
+        private static readonly MyDefinitionId Electricity = new MyDefinitionId(typeof(MyObjectBuilder_GasProperties), "Electricity");
         public NachoPlugin()
         {
             try
@@ -468,6 +473,7 @@ namespace NachoPluginSystem
                 AutoReset = true
             };           
             cleanupTimer.Elapsed += CleanupTimer_Elapsed;
+            
             cleanupTimer.Start();
             SetOneOffTimer();
             MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(MESSAGE_ID, HandleMessage);
@@ -478,16 +484,28 @@ namespace NachoPluginSystem
         private static void SetOneOffTimer()
         {
             DateTime now = DateTime.Now;
-            DateTime nextTrigger = new DateTime(now.Year, now.Month, now.Day, 1, 19, 0);
+            DateTime nextTrigger;
 
-            if (now > nextTrigger)
+            // Determine the next trigger time
+            if (now.Hour < 1 || (now.Hour == 1 && now.Minute < 19))
             {
-                nextTrigger = nextTrigger.AddDays(1);
+                // Set next trigger to 1:19 AM today
+                nextTrigger = new DateTime(now.Year, now.Month, now.Day, 1, 19, 0);
+            }
+            else if (now.Hour < 13 || (now.Hour == 13 && now.Minute < 19))
+            {
+                // Set next trigger to 1:19 PM today
+                nextTrigger = new DateTime(now.Year, now.Month, now.Day, 13, 19, 0);
+            }
+            else
+            {
+                // Set next trigger to 1:19 AM the next day
+                nextTrigger = new DateTime(now.Year, now.Month, now.Day, 1, 19, 0).AddDays(1);
             }
 
-            double intervalToFirstTrigger = (nextTrigger - now).TotalMilliseconds;
+            double intervalToNextTrigger = (nextTrigger - now).TotalMilliseconds;
 
-            reboot = new Timer(intervalToFirstTrigger);
+            reboot = new Timer(intervalToNextTrigger);
             reboot.Elapsed += RebootTimer;
             reboot.AutoReset = false; // One-off timer
             reboot.Start();
@@ -514,6 +532,8 @@ namespace NachoPluginSystem
                 await Task.Delay(TimeSpan.FromMinutes(1));
             }
             ScanAndDeleteOutOfRangeGrids();
+            
+            shopHandler.ReloadShopItems();
         }
 
         public bool isProcessing = false;
@@ -860,7 +880,6 @@ namespace NachoPluginSystem
                                 {
                                     Log("Insufficient parameters for changing command");
                                 }
-
                                 break;
                             case "pay":
                                 // Check if there are enough parameters for the pay command
@@ -879,7 +898,7 @@ namespace NachoPluginSystem
                                 else
                                 {
                                     Log("Insufficient parameters for pay command");
-                                    MyAPIGateway.Utilities.SendMessage("Usage: !pay *username* *amount*");
+                                    MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID,WhisperMessage("Usage: !pay *username* *amount*"), sender);
                                 }
                                 break;
                             case "help":
@@ -888,8 +907,7 @@ namespace NachoPluginSystem
                                 string availableCommands = GetAvailableCommands(sender);
                                 // Log the available commands
                                 Log(availableCommands);
-                                byte[] messageBytes = Encoding.UTF8.GetBytes(availableCommands);
-                                MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, messageBytes, sender);
+                                MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, WhisperMessage(availableCommands), sender);
                                 break;
                             case "flex":
                                 HandleFlexCommand(sender);
@@ -919,9 +937,17 @@ namespace NachoPluginSystem
                                 HandleGridsCommand();
                                 break;
                             case "power":
-                                HandlePowerCommand(sender);
+                                if (messageParts.Length < 2)
+                                {
+                                    MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, WhisperMessage("This command will power up the first battery in your Small Grid your currently seated in (the first battery in the block list), type '!power confirm' to use"),sender);
+                                }
+                                else
+                                {
+                                    HandlePowerCommand(sender);
+                                }
+                                
                                 break;
-                            case "giveitem":
+                            case "give_item":
                                 if (messageParts.Length > 3)
                                 {
                                     GivePlayerItem(GetSteamIdFromPlayerName(messageParts[1]), "MyObjectBuilder_Component", messageParts[2], messageParts[3]);
@@ -932,7 +958,17 @@ namespace NachoPluginSystem
                                 }
                                 break;
                             case "scrapit":
-                                CheckPlayerLogin(messageParts[1], sender);
+                                if (messageParts.Length < 2)
+                                {
+                                    MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, WhisperMessage("This command will check the last time the server has seen the player login"), sender);
+                                }
+                                else
+                                {
+                                    CheckPlayerLogin(messageParts[1], sender);
+                                }
+                                break;
+                            case "updateshop":
+                                shopHandler.ReloadShopItems();
                                 break;
                             default:
                                 Log($"Unknown command: {command}");
@@ -1497,8 +1533,11 @@ namespace NachoPluginSystem
                     cubeGrid.GetBlocks(blocks);
                     foreach (IMySlimBlock block in blocks)
                     {
-                        if (block.FatBlock is IMyCubeBlock cubeBlock && IsScrapBeacon(cubeBlock))
+
+                        string detectedBlock;
+                        if (block.FatBlock is IMyCubeBlock cubeBlock && IsScrapBeacon(cubeBlock, out detectedBlock) && IsBeaconFunctionalAndPowered(cubeBlock, detectedBlock))
                         {
+                            
                             scrapBeacons.Add(cubeBlock);
                             //Log($"Scrap Beacon found: {cubeBlock.EntityId}");
                         }
@@ -1555,14 +1594,43 @@ namespace NachoPluginSystem
                 }
             }
         }
-
-        public bool IsScrapBeacon(IMyCubeBlock block)
+        private bool IsBeaconFunctionalAndPowered(IMyCubeBlock cubeBlock, string detectedBlock)
         {
-            //Log("IS THIS BEING CHECKED?");
-            // Check if the block is a Scrap Beacon block based on its subtype ID or block type ID
-            // Replace "ScrapBeaconSubtypeId" with the actual subtype ID or block type ID of the Scrap Beacon block
-            return block.BlockDefinition.SubtypeId == "LargeBlockScrapBeacon" ||
-                 block.BlockDefinition.SubtypeId == "SmallBlockScrapBeacon";
+            if (detectedBlock == "StoreBlock")
+            {
+                return true;
+            }
+            if (cubeBlock is IMyFunctionalBlock functionalBlock)
+            {
+                // Checks if the beacon is functional (not damaged) and is on a powered grid
+                return functionalBlock.IsFunctional && functionalBlock.ResourceSink.IsPoweredByType(Electricity) ;
+            }
+            return false;
+        }
+
+        public bool IsScrapBeacon(IMyCubeBlock block, out string detectedBlock)
+        {
+            // Initialize the out parameter
+            detectedBlock = null;
+
+            // Check if the block is a Scrap Beacon block based on its subtype ID
+            if (block.BlockDefinition.SubtypeId == "LargeBlockScrapBeacon")
+            {
+                detectedBlock = "LargeBlockScrapBeacon";
+                return true;
+            }
+            else if (block.BlockDefinition.SubtypeId == "SmallBlockScrapBeacon")
+            {
+                detectedBlock = "SmallBlockScrapBeacon";
+                return true;
+            }
+            else if (block.BlockDefinition.SubtypeId == "StoreBlock")
+            {
+                detectedBlock = "StoreBlock";
+                return true;
+            }
+
+            return false;
         }
 
         public bool IsGridWithinRangeOfScrapBeacon(IMyCubeGrid grid, List<IMyCubeBlock> scrapBeacons)
@@ -1636,140 +1704,10 @@ namespace NachoPluginSystem
                 MyAPIGateway.Utilities.SendMessage($"{viewdistance}");
                 
             }
-
+            
         }
 
     }
-
-    /* public class MyVoxelManager
-    {
-        private const double StepSize = 256.0; // Increased step size for better performance
-
-        // Entry point for resetting voxels
-        public void ResetVoxelsExceptNearGrids()
-        {
-            // Retrieve all voxel maps in the world
-            var voxelMaps = new List<IMyVoxelBase>();
-            MyAPIGateway.Session.VoxelMaps.GetInstances(voxelMaps);
-
-            // Output the number and names of voxel maps
-            Console.WriteLine($"Number of voxel maps: {voxelMaps.Count}");
-            foreach (var voxelMap in voxelMaps)
-            {
-                Console.WriteLine($"Voxel map: {voxelMap.StorageName}");
-            }
-
-            // Retrieve all entities in the world and filter for grids
-            var entities = new HashSet<IMyEntity>();
-            MyAPIGateway.Entities.GetEntities(entities, e => e is IMyCubeGrid);
-            var grids = new List<IMyCubeGrid>();
-            foreach (var entity in entities)
-            {
-                if (entity is IMyCubeGrid grid)
-                {
-                    grids.Add(grid);
-                }
-            }
-
-            // Process each voxel map in parallel
-            Parallel.ForEach(voxelMaps, voxelMap =>
-            {
-                foreach (var grid in grids)
-                {
-                    // Get the bounding box of the grid and define a safe distance
-                    var gridBoundingBox = grid.WorldAABB;
-                    float safeDistance = 100f; // Adjust this distance as needed
-                    var safeZone = gridBoundingBox.Inflate(safeDistance);
-
-                    // Reset modified voxels outside the safe zone
-                    ResetModifiedVoxels(voxelMap, safeZone);
-                }
-
-                // Output a message when a voxel map is finished processing
-                Console.WriteLine($"Finished processing voxel map: {voxelMap.StorageName}");
-            });
-        }
-
-        // Method to reset modified voxels in a voxel map outside the specified safe zone
-        private void ResetModifiedVoxels(IMyVoxelBase voxelMap, BoundingBoxD safeZone)
-        {
-            // Get the voxel map's bounding box
-            var voxelBoundingBox = voxelMap.WorldAABB;
-
-            // Iterate through the voxel map and reset modified voxels outside the safe zone
-            Parallel.For((int)voxelBoundingBox.Min.X, (int)voxelBoundingBox.Max.X, x =>
-            {
-                for (double y = voxelBoundingBox.Min.Y; y <= voxelBoundingBox.Max.Y; y += StepSize)
-                {
-                    for (double z = voxelBoundingBox.Min.Z; z <= voxelBoundingBox.Max.Z; z += StepSize)
-                    {
-                        var voxelPos = new Vector3D(x, y, z);
-
-                        if (safeZone.Contains(voxelPos) == ContainmentType.Disjoint)
-                        {
-                            // Check if the voxel has been modified
-                            if (IsVoxelModified(voxelMap, voxelPos))
-                            {
-                                // Reset the modified voxel at this position
-                                var localPos = Vector3D.Transform(voxelPos, voxelMap.PositionComp.WorldMatrixInvScaled);
-                                ResetVoxel(voxelMap, localPos);
-                            }
-                        }
-                    }
-                }
-            });
-        }
-
-        // Placeholder method to check if a voxel has been modified
-        private bool IsVoxelModified(IMyVoxelBase voxelMap, Vector3D voxelPos)
-        {
-            var storage = voxelMap.Storage;
-
-            // Define a small region around the voxel position
-            Vector3I min = Vector3I.Floor(voxelPos);
-            Vector3I max = min + 100;
-
-            var data = new MyStorageData();
-            data.Resize(min, max);
-
-            // Read the voxel data
-            storage.ReadRange(data, MyStorageDataTypeFlags.Content, 0, min, max);
-
-            // Check if the voxel content is different from the baseline (e.g., default value of 0 or a predefined value)
-            byte baselineContent = 0; // Assuming 0 as the baseline content value
-            for (int i = 0; i < data.SizeLinear; i++)
-            {
-                if (data.Content(i) != baselineContent)
-                {
-                    return true; // Voxel is modified
-                }
-            }
-            return false; // Voxel is not modified
-        }
-
-        // Method to reset a voxel at a given local position
-        private void ResetVoxel(IMyVoxelBase voxelMap, Vector3D localPos)
-        {
-            var storage = voxelMap.Storage;
-
-            // Define a small region around the local position
-            Vector3I min = Vector3I.Floor(localPos);
-            Vector3I max = min + 100;
-
-            var data = new MyStorageData();
-            data.Resize(min, max);
-
-            // Reset the voxel content to the baseline value (e.g., 0)
-            byte baselineContent = 0; // Assuming 0 as the baseline content value
-            for (int i = 0; i < data.SizeLinear; i++)
-            {
-                data.Content(i, baselineContent);
-            }
-
-            // Write the reset voxel data back to the storage
-            storage.WriteRange(data, MyStorageDataTypeFlags.Content, min, max);
-        }
-    } */
 
     public class CooldownManager
     {
@@ -1837,7 +1775,7 @@ namespace NachoPluginSystem
         { "grids", PromotionLevel.Default },
         { "flex", PromotionLevel.Default },
         { "power", PromotionLevel.Default },
-        { "giveitem", PromotionLevel.Admin }
+        { "give_item", PromotionLevel.Admin }
 
     };
 
