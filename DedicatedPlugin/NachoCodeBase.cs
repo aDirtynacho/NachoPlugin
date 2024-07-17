@@ -970,6 +970,9 @@ namespace NachoPluginSystem
                             case "updateshop":
                                 shopHandler.ReloadShopItems();
                                 break;
+                            case "gridsnear":
+                                HandleGridsNearMeCommand(sender);
+                                break;
                             default:
                                 Log($"Unknown command: {command}");
                                 var message = WhisperMessage($"Unknown Command: {command}");
@@ -1692,7 +1695,53 @@ namespace NachoPluginSystem
             
             
         }
-       
+
+        public void HandleGridsNearMeCommand(ulong sender)
+        {
+            HashSet<IMyEntity> entities = new HashSet<IMyEntity>();
+            List<IMyCubeGrid> grids1 = new List<IMyCubeGrid>();
+            MyAPIGateway.Entities.GetEntities(entities, e => e is IMyCubeGrid);
+
+            IMyPlayer player = GetPlayerBySteamId(sender);
+            if (player == null)
+            {
+                MyAPIGateway.Utilities.SendMessage("No player found.");
+                return;
+            }
+
+            Vector3D playerPosition = player.GetPosition();
+            double radius = 250.0;
+            int staticGridCount = 0;
+            int dynamicGridCount = 0;
+            int gridCount = 0;
+
+            foreach (IMyEntity entity in entities)
+            {
+                if (entity is IMyCubeGrid grid)
+                {
+                    double distance = Vector3D.Distance(playerPosition, grid.GetPosition());
+                    if (distance <= radius)
+                    {
+                        grids1.Add(grid);
+                        gridCount++;
+                        if (grid.IsStatic)
+                        {
+                            staticGridCount++;
+                        }
+                        else
+                        {
+                            dynamicGridCount++;
+                        }
+                    }
+                }
+            }
+
+            MyAPIGateway.Utilities.SendMessage($"Total number of grids within 250m: {gridCount}");
+            MyAPIGateway.Utilities.SendMessage($"Static Grids (Non Sim Speed Killing): {staticGridCount}");
+            MyAPIGateway.Utilities.SendMessage($"Dynamic Grids (Sim Speed Killers): {dynamicGridCount}");
+            Log($"Total number of grids within 250m: {gridCount}");
+        }
+
         public void TestArea(string configsetting, string param)
         {
             var paramdistance = int.Parse(param);

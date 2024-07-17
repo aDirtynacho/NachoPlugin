@@ -2,6 +2,7 @@
 using Sandbox.Common.ObjectBuilders.Definitions;
 using Sandbox.Definitions;
 using Sandbox.ModAPI;
+using Sandbox.ModAPI.Interfaces;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -13,6 +14,7 @@ using System.IO;
 using System.Text;
 using System.Xml.Serialization;
 using VRage.FileSystem;
+using VRageMath;
 
 namespace NachoPluginSystem
 {
@@ -93,21 +95,55 @@ namespace NachoPluginSystem
 
         private void HandlePurchaseRequest(ulong senderId, string itemTypes, string itemName, ulong quantity, ulong totalCost)
         {
+            NachoPrefabPrinter nachoPrefabPrinter = new NachoPrefabPrinter();
             NachoPlugin.Log(itemName);
             try
             {
-                // Validate the item
-                if (shopItems.ContainsKey(itemName))
+                if (itemTypes == "MyObjectBuilder_PrefabDefinition")
                 {
                     string amount = quantity.ToString();
                     ShopItem selectedItem = shopItems[itemName];
                     ulong itemPrice = selectedItem.Price;
                     ulong expectedCost = itemPrice * quantity;
                     Console.WriteLine(expectedCost);
-                    if (expectedCost == totalCost && totalCost >= 0)
+                    if (expectedCost == totalCost && totalCost > 0)
                     {
-                        // Here you can add additional logic to deduct the cost from the player's balance, add the item to their inventory, etc.
-                        // For now, we'll just log the purchase
+                        string playerName = nachoPlugin.GetPlayerNameFromSteamId(senderId);
+                        long senderIdentityId = MyAPIGateway.Players.TryGetIdentityId(senderId);
+                        var senderID = senderIdentityId.ToString();
+                        string sender = nachoPlugin.GetPlayerNameFromSteamId(senderId);
+                        nachoPlugin.GetPlayerBalance(sender, out long senderBank);
+                        ulong senderBankUlong = (ulong)senderBank;
+                        Console.WriteLine($"{senderBank}{senderBankUlong}");
+                        var player = nachoPlugin.GetPlayerByName(sender);
+
+                        if (senderBankUlong < expectedCost)
+                        {
+                            NachoPlugin.Log($"Insufficient balance for sender: {nachoPlugin.GetPlayerNameFromSteamId(senderId)}");
+                            var message2 = Encoding.UTF8.GetBytes("Error:Whoa there, Bank Account ain't got that much! :P");
+                            MyAPIGateway.Multiplayer.SendMessageTo(ServerCommunicationId, message2, senderId);
+                            return;
+                        }
+                        long expectedCostLong = (long)expectedCost;
+                        Console.WriteLine($"Expected costs?{expectedCost}{expectedCostLong}");
+                        MyAPIGateway.Players.RequestChangeBalance(senderIdentityId, -expectedCostLong);
+                        //This is the place where we have to find the players location and spawn the prefab in front of them, with a added height of 3 meters to make sure its a safe spawn
+                        nachoPrefabPrinter.SpawnPrefab(player, itemName);
+
+
+                    }
+                }
+                // Validate the item
+                if (itemTypes == "Component")
+                {
+                    string amount = quantity.ToString();
+                    ShopItem selectedItem = shopItems[itemName];
+                    ulong itemPrice = selectedItem.Price;
+                    ulong expectedCost = itemPrice * quantity;
+                    Console.WriteLine(expectedCost);
+                    if (expectedCost == totalCost && totalCost > 0)
+                    {
+
                         string playerName = nachoPlugin.GetPlayerNameFromSteamId(senderId);
                         NachoPlugin.Log($"{playerName} wants to buy {quantity} of {selectedItem.Name} (Subtype: {selectedItem.Subtype}) for a total of {totalCost} SC.");
                         MyAPIGateway.Utilities.ShowMessage("ServerShopHandler", $"{playerName} wants to buy {quantity} of {selectedItem.Name} (Subtype: {selectedItem.Subtype}) for a total of {totalCost} SC.");
@@ -276,6 +312,53 @@ namespace NachoPluginSystem
             return (string.Empty, string.Empty);
         }
     }
+
+    public class NachoPrefabPrinter
+    {
+        public void SpawnPrefab(IMyPlayer player, string prefabName)
+        {
+            // Ensure the player and prefab name are valid
+            if (player == null || string.IsNullOrEmpty(prefabName))
+                return;
+
+            // Get the player's position and orientation
+            Vector3D playerPosition = player.GetPosition();
+            MatrixD playerMatrix = player.Character.WorldMatrix;
+
+            // Calculate the spawn position in front of the player
+            Vector3D forwardVector = playerMatrix.Forward;
+            Vector3D upVector = playerMatrix.Up;
+            Vector3D spawnPosition = playerPosition + forwardVector * 10.0 + upVector * 5.0; // Adjust the distance as needed
+
+            // Load the prefab definition
+            MyPrefabDefinition prefabDefinition = MyDefinitionManager.Static.GetPrefabDefinition(prefabName);
+            if (prefabDefinition == null)
+            {
+                MyAPIGateway.Utilities.ShowMessage("Error", $"Prefab '{prefabName}' not found!");
+                return;
+            }
+
+            // Create a list to store the spawned grids
+            List<IMyCubeGrid> spawnedGrids = new List<IMyCubeGrid>();
+
+            // Spawn the prefab
+            MyAPIGateway.PrefabManager.SpawnPrefab(
+                spawnedGrids,
+                prefabName,
+                spawnPosition,
+                playerMatrix.Forward,
+                playerMatrix.Up,
+                Vector3.Zero,
+                Vector3.Zero,
+                null,
+                SpawningOptions.None,
+                false,
+                () => MyAPIGateway.Utilities.ShowMessage("Success", $"Spawned prefab '{prefabName}' in front of the player.")
+            );
+        }
+    }
+
+
     public class ShopItem
     {
         public string Name { get; set; }
