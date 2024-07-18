@@ -1376,7 +1376,13 @@ namespace NachoPluginSystem
                         Log($"{sender} claimed reward!");
                         long target = MyAPIGateway.Players.TryGetIdentityId(sender);
                         MyAPIGateway.Players.RequestChangeBalance(target, Plugin.Instance.Config.Reward);
-                        GivePlayerItem(sender, "MyObjectBuilder_Component", "PowerCell", "5");
+                        List<string> componetList = new List<String> { "PowerCell", "Motor", "MetalGrid", "Girder", "Display", "BulletproofGlass", "Superconductor", "Computer", "Reactor", "Medical", "Detector" };
+                        Random random = new Random();
+                        string randomComponent = componetList[random.Next(componetList.Count)];
+                        Random number = new Random();
+                        int amount = number.Next(5, 13);
+                        string amountString = amount.ToString();
+                        GivePlayerItem(sender, "MyObjectBuilder_Component", randomComponent, amountString);
 
                     }
                     else
@@ -1736,9 +1742,9 @@ namespace NachoPluginSystem
                 }
             }
 
-            MyAPIGateway.Utilities.SendMessage($"Total number of grids within 250m: {gridCount}");
-            MyAPIGateway.Utilities.SendMessage($"Static Grids (Non Sim Speed Killing): {staticGridCount}");
-            MyAPIGateway.Utilities.SendMessage($"Dynamic Grids (Sim Speed Killers): {dynamicGridCount}");
+            MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, WhisperMessage($"Total number of grids within 250m: {gridCount}"),sender);
+            MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, WhisperMessage($"Static Grids (Non Sim Speed Killing): {staticGridCount}"),sender);
+            MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, WhisperMessage($"Dynamic Grids (Sim Speed Killers): {dynamicGridCount}"), sender);
             Log($"Total number of grids within 250m: {gridCount}");
         }
 

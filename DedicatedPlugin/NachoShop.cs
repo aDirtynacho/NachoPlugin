@@ -129,6 +129,8 @@ namespace NachoPluginSystem
                         MyAPIGateway.Players.RequestChangeBalance(senderIdentityId, -expectedCostLong);
                         //This is the place where we have to find the players location and spawn the prefab in front of them, with a added height of 3 meters to make sure its a safe spawn
                         nachoPrefabPrinter.SpawnPrefab(player, itemName);
+                        var successMessage = Encoding.UTF8.GetBytes("Success:Purchase complete");
+                        MyAPIGateway.Multiplayer.SendMessageTo(ServerCommunicationId, successMessage, senderId);
 
 
                     }
@@ -328,7 +330,7 @@ namespace NachoPluginSystem
             // Calculate the spawn position in front of the player
             Vector3D forwardVector = playerMatrix.Forward;
             Vector3D upVector = playerMatrix.Up;
-            Vector3D spawnPosition = playerPosition + forwardVector * 10.0 + upVector * 5.0; // Adjust the distance as needed
+            Vector3D spawnPosition = playerPosition + forwardVector * 10.0 + upVector * 10.0; // Adjust the distance as needed
 
             // Load the prefab definition
             MyPrefabDefinition prefabDefinition = MyDefinitionManager.Static.GetPrefabDefinition(prefabName);
@@ -353,8 +355,29 @@ namespace NachoPluginSystem
                 null,
                 SpawningOptions.None,
                 false,
-                () => MyAPIGateway.Utilities.ShowMessage("Success", $"Spawned prefab '{prefabName}' in front of the player.")
+                () =>
+                {
+                    MyAPIGateway.Utilities.ShowMessage("Success", $"Spawned prefab '{prefabName}' in front of the player.");
+                    SetBlocksToHalfBuilt(spawnedGrids);
+                }
             );
+        }
+        private void SetBlocksToHalfBuilt(List<IMyCubeGrid> grids)
+        {
+            foreach (var grid in grids)
+            {
+                var cubeGrid = grid as IMyCubeGrid;
+                if (cubeGrid != null)
+                {
+                    List<IMySlimBlock> blocks = new List<IMySlimBlock>();
+                    cubeGrid.GetBlocks(blocks, block => block != null);
+                    foreach (var block in blocks)
+                    {
+                        block.DecreaseMountLevel(block.BuildIntegrity / 2, null);
+                        block.ClearConstructionStockpile(null);
+                    }
+                }
+            }
         }
     }
 
