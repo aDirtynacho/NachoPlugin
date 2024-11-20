@@ -15,6 +15,9 @@ using System.Text;
 using System.Xml.Serialization;
 using VRage.FileSystem;
 using VRageMath;
+using VRage.ObjectBuilders;
+using VRage;
+using System.Windows.Forms;
 
 namespace NachoPluginSystem
 {
@@ -59,9 +62,10 @@ namespace NachoPluginSystem
         {
             try
             {
-                Console.WriteLine("MESSAGE RECIEVED");
+                Console.WriteLine("MESSAGE RECEIVED");
                 string request = Encoding.UTF8.GetString(message);
                 Console.WriteLine(request);
+
                 if (request == "RequestItems")
                 {
                     LoadShopItemsFromXML();
@@ -72,8 +76,8 @@ namespace NachoPluginSystem
                     }
                     // Prepare the item list
                     var itemList = shopItems.Values.ToList();
-                    string itemListJson = MyAPIGateway.Utilities.SerializeToXML(itemList);
-                    byte[] response = Encoding.UTF8.GetBytes("ItemsList:" + itemListJson);
+                    string itemListXml = MyAPIGateway.Utilities.SerializeToXML(itemList);
+                    byte[] response = Encoding.UTF8.GetBytes("ItemsList:" + itemListXml);
 
                     // Send the item list back to the client
                     MyAPIGateway.Multiplayer.SendMessageTo(ServerCommunicationId, response, senderId);
@@ -81,10 +85,22 @@ namespace NachoPluginSystem
                 }
                 else
                 {
-                    // Handle purchase request
-                    var purchaseRequest = Encoding.UTF8.GetString(message);
-                    var purchaseRequestObj = MyAPIGateway.Utilities.SerializeFromXML<PurchaseRequest>(purchaseRequest);
-                    HandlePurchaseRequest(senderId, purchaseRequestObj.Type, purchaseRequestObj.ItemName, purchaseRequestObj.Quantity, purchaseRequestObj.TotalCost);
+                    // Try to determine the type of request
+                    if (request.Contains("<SellRequest"))
+                    {
+                        var sellRequestObj = MyAPIGateway.Utilities.SerializeFromXML<SellRequest>(request);
+                        HandleSellingRequest(senderId, sellRequestObj.Type, sellRequestObj.ItemName, sellRequestObj.Quantity, sellRequestObj.TotalCost);
+                    }
+                    else if (request.Contains("<PurchaseRequest"))
+                    {
+                        var purchaseRequestObj = MyAPIGateway.Utilities.SerializeFromXML<PurchaseRequest>(request);
+                        HandlePurchaseRequest(senderId, purchaseRequestObj.Type, purchaseRequestObj.ItemName, purchaseRequestObj.Quantity, purchaseRequestObj.TotalCost);
+                    }
+                    else
+                    {
+                        MyAPIGateway.Utilities.ShowMessage("ServerShopHandler", "Unknown request received.");
+                        NachoPlugin.Log($"Unknown request received: {request}");
+                    }
                 }
             }
             catch (Exception ex)
@@ -92,11 +108,69 @@ namespace NachoPluginSystem
                 NachoPlugin.Log($"Error in OnMessageReceived: {ex.Message}");
             }
         }
+        // Method to check if a player has the specified items in their inventory
+        public bool PlayerHasItems(IMyPlayer player, string itemType, string itemSubtype, ulong quantity)
+        {
+            NachoPlugin.Log($"{itemType}{itemSubtype}");
+            IMyInventory inventory = player.Character.GetInventory();
+            if (inventory == null)
+                return false;
+            var (itemT, itemS1) = ItemSubtypeHelper.GetItemSubtype($"{itemSubtype}");
+            MyDefinitionId itemId = new MyDefinitionId(MyObjectBuilderType.Parse(itemT), itemS1);
+            var items = inventory.GetItems();
+            ulong itemCount = 0;
 
+            foreach (var item in items)
+            {
+                if (item.Content.GetId() == itemId)
+                {
+                    itemCount += (ulong)item.Amount.RawValue;
+                    if (itemCount >= quantity)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return itemCount >= quantity;
+        }
+
+        // Method to remove specified items from a player's inventory
+        public void RemovePlayerItems(IMyPlayer player, string itemType, string itemSubtype, int quantity)
+        {
+            IMyInventory inventory = player.Character.GetInventory();
+            if (inventory == null)
+                return;
+            var (itemT, itemS1) = ItemSubtypeHelper.GetItemSubtype($"{itemSubtype}");
+            MyDefinitionId itemId = new MyDefinitionId(MyObjectBuilderType.Parse(itemT), itemS1);
+            var items = inventory.GetItems();
+
+            foreach (var item in items)
+            {
+                if (item.Content.GetId() == itemId)
+                {
+                    int itemAmount = (int)item.Amount;
+                    if (itemAmount <= quantity)
+                    {
+                        quantity -= itemAmount;
+                        inventory.RemoveItemsOfType((MyFixedPoint)itemAmount, item.Content.GetId());
+                    }
+                    else
+                    {
+                        inventory.RemoveItemsOfType((MyFixedPoint)quantity, item.Content.GetId());
+                        quantity = 0;
+                    }
+
+                    if (quantity == 0)
+                        break;
+                }
+            }
+        }
         private void HandlePurchaseRequest(ulong senderId, string itemTypes, string itemName, ulong quantity, ulong totalCost)
         {
             NachoPrefabPrinter nachoPrefabPrinter = new NachoPrefabPrinter();
             NachoPlugin.Log(itemName);
+            NachoPlugin.Log(itemTypes);
             try
             {
                 if (itemTypes == "MyObjectBuilder_PrefabDefinition")
@@ -136,10 +210,13 @@ namespace NachoPluginSystem
                     }
                 }
                 // Validate the item
-                if (itemTypes == "Component")
+                if (itemTypes != "MyObjectBuilder_PrefabDefinition")
                 {
+                    string finalType = "MyObjectBuilder_" + itemTypes;
+                    NachoPlugin.Log(finalType);
                     string amount = quantity.ToString();
                     ShopItem selectedItem = shopItems[itemName];
+                    NachoPlugin.Log($"{selectedItem}");
                     ulong itemPrice = selectedItem.Price;
                     ulong expectedCost = itemPrice * quantity;
                     Console.WriteLine(expectedCost);
@@ -157,15 +234,14 @@ namespace NachoPluginSystem
                         ulong senderBankUlong = (ulong)senderBank;
                         Console.WriteLine($"{senderBank}{senderBankUlong}");
                         var player = nachoPlugin.GetPlayerByName(sender);
+                        NachoPlugin.Log($"{player}{sender}{senderId}");
                         float playerInventoryVolume = nachoPlugin.GetPlayerInventoryVolume(player);
                         float playerMaxInventoryVolume = nachoPlugin.GetPlayerMaxInventoryVolume(player);
                         float playerAvailableInventoryVolume = playerMaxInventoryVolume - playerInventoryVolume;
 
                         // Get the volume and subtype of the item dynamically
                         float itemVolume = ComponentVolumeHelper.GetComponentVolume(itemName);
-                        var itemInfo = ItemSubtypeHelper.GetItemSubtype($"{itemName}");
-                        string itemType = itemInfo.itemType;
-                        string itemSubtype = itemInfo.itemSubtype;
+                        NachoPlugin.Log($"{itemVolume}");
                         float totalItemVolume = itemVolume * quantity;
 
                         // Check if the sender has sufficient balance
@@ -188,7 +264,8 @@ namespace NachoPluginSystem
                         long expectedCostLong = (long)expectedCost;
                         Console.WriteLine($"Expected costs?{expectedCost}{expectedCostLong}");
                         MyAPIGateway.Players.RequestChangeBalance(senderIdentityId, -expectedCostLong);
-                        nachoPlugin.GivePlayerItem(senderId, itemType, itemSubtype, amount);
+                        NachoPlugin.Log($"{senderID + "1"},{finalType + "2"},{itemName+"3"},{amount+"--4"}");
+                        nachoPlugin.GivePlayerItem(senderId, finalType, itemName, amount);
                         var successMessage = Encoding.UTF8.GetBytes("Success:Purchase complete");
                         MyAPIGateway.Multiplayer.SendMessageTo(ServerCommunicationId, successMessage, senderId);
                     }
@@ -199,14 +276,59 @@ namespace NachoPluginSystem
                 }
                 else
                 {
-                    NachoPlugin.Log($"Item {itemName} not found in shop.");
+                    NachoPlugin.Log($"Item {itemName} not found in shop, due to plugin/file error.");
                 }
             }
             catch (Exception ex)
             {
-                NachoPlugin.Log($"Error in HandlePurchaseRequest: {ex.Message}");
+                NachoPlugin.Log($"Error in HandlePurchaseRequest: {ex.Message},{ex.InnerException},{ex.Source},{ex.Data},{ex.StackTrace},{ex.TargetSite}");
             }
         }
+        private void HandleSellingRequest(ulong senderId, string itemType, string itemName, ulong quantity, ulong totalCost)
+        {
+            NachoPlugin.Log(itemName);
+            try
+            {
+                    itemName = itemName.Trim();                   
+                    ShopItem selectedItem = shopItems[itemName];
+                    ulong itemSellPrice = selectedItem.SellPrice;
+                    ulong expectedPayment = itemSellPrice * quantity;
+
+                    if (expectedPayment == totalCost && totalCost > 0)
+                    {
+                        string playerName = nachoPlugin.GetPlayerNameFromSteamId(senderId);
+                        long senderIdentityId = MyAPIGateway.Players.TryGetIdentityId(senderId);
+                        var player = nachoPlugin.GetPlayerByName(playerName);
+                        float playerInventoryVolume = nachoPlugin.GetPlayerInventoryVolume(player);
+                        float playerMaxInventoryVolume = nachoPlugin.GetPlayerMaxInventoryVolume(player);
+
+                        // Check if the player has the items in their inventory
+                        bool hasItems = PlayerHasItems(player, itemType, itemName, quantity);
+                        if (!hasItems)
+                        {
+                            var errorMessage = Encoding.UTF8.GetBytes("Error:You don't have enough items to sell.");
+                            MyAPIGateway.Multiplayer.SendMessageTo(ServerCommunicationId, errorMessage, senderId);
+                            return;
+                        }
+
+                        // Remove items from player's inventory and add money to their balance
+                        RemovePlayerItems(player, itemType, itemName, (int)quantity);
+                        MyAPIGateway.Players.RequestChangeBalance(senderIdentityId, (long)expectedPayment);
+
+                        var successMessage = Encoding.UTF8.GetBytes("Success:Sale complete");
+                        MyAPIGateway.Multiplayer.SendMessageTo(ServerCommunicationId, successMessage, senderId);
+                    }
+                    else
+                    {
+                        MyAPIGateway.Utilities.ShowMessage("ServerShopHandler", $"Sale request total payment mismatch or negative total payment. {itemName} {quantity}");
+                    }
+            }
+            catch (Exception ex)
+            {
+                NachoPlugin.Log($"Error in HandleSellingRequest: {ex.Message}\nStack Trace: {ex.StackTrace}");
+            }
+        }
+
         private void LoadShopItemsFromXML()
         {
             try
@@ -247,11 +369,11 @@ namespace NachoPluginSystem
                 {
                     Items = new List<ShopItem>
                     {
-                        new ShopItem { Name = "Steel Plates", Price = 10000, Subtype = "SteelPlate", Type = "Component" },
-                        new ShopItem { Name = "Power Cells", Price = 20000, Subtype = "PowerCell", Type = "Component" },
-                        new ShopItem { Name = "Solar Cells", Price = 30000, Subtype = "SolarCell", Type = "Component" },
-                        new ShopItem { Name = "Large Grid", Price = 100000, Subtype = "MetalGrid", Type = "Component" },
-                        new ShopItem { Name = "Large Tube", Price = 100000, Subtype = "LargeTube", Type = "Component" }
+                        new ShopItem { Name = "Steel Plates", Price = 10000, SellPrice = 0, Subtype = "SteelPlate", Type = "Component" },
+                        new ShopItem { Name = "Power Cells", Price = 20000, SellPrice = 0, Subtype = "PowerCell", Type = "Component" },
+                        new ShopItem { Name = "Solar Cells", Price = 30000, SellPrice = 0, Subtype = "SolarCell", Type = "Component" },
+                        new ShopItem { Name = "Large Grid", Price = 100000, SellPrice = 0, Subtype = "MetalGrid", Type = "Component" },
+                        new ShopItem { Name = "Large Tube", Price = 100000, SellPrice = 0, Subtype = "LargeTube", Type = "Component" }
                     }
                 };
 
@@ -275,25 +397,11 @@ namespace NachoPluginSystem
         public static float GetComponentVolume(string componentName)
         {
             var definitionManager = MyDefinitionManager.Static;
-            var componentDefinition = definitionManager.GetComponentDefinition(new MyDefinitionId(typeof(MyObjectBuilder_Component), componentName));
-
-            return componentDefinition?.Volume ?? 0f;
-        }
-    }
-    public class ItemSubtypeHelper
-    {
-        public static (string itemType, string itemSubtype) GetItemSubtype(string itemName)
-        {
-            var definitionManager = MyDefinitionManager.Static;
-            var itemDefinition = definitionManager.GetComponentDefinition(new MyDefinitionId(typeof(MyObjectBuilder_Component), itemName));
-
-            if (itemDefinition != null)
-            {
-                return ("MyObjectBuilder_Component", itemDefinition.Id.SubtypeName);
-            }
+            MyDefinitionBase definition = null;
 
             var itemTypes = new[]
             {
+            typeof(MyObjectBuilder_Component),
             typeof(MyObjectBuilder_Ore),
             typeof(MyObjectBuilder_Ingot),
             typeof(MyObjectBuilder_PhysicalGunObject),
@@ -304,7 +412,41 @@ namespace NachoPluginSystem
 
             foreach (var itemType in itemTypes)
             {
-                itemDefinition = definitionManager.GetComponentDefinition(new MyDefinitionId(itemType, itemName));
+                definition = definitionManager.GetDefinition(new MyDefinitionId(itemType, componentName));
+                if (definition is MyPhysicalItemDefinition physicalItemDef)
+                {
+                    return physicalItemDef.Volume;
+                }
+            }
+
+            return 0f;
+        }
+    }
+
+
+
+    public class ItemSubtypeHelper
+    {
+        public static (string itemType, string itemSubtype) GetItemSubtype(string itemName)
+        {
+            var definitionManager = MyDefinitionManager.Static;
+            MyDefinitionBase itemDefinition = null;
+
+            var itemTypes = new[]
+            {
+            typeof(MyObjectBuilder_Component),
+            typeof(MyObjectBuilder_Ore),
+            typeof(MyObjectBuilder_Ingot),
+            typeof(MyObjectBuilder_PhysicalGunObject),
+            typeof(MyObjectBuilder_AmmoMagazine),
+            typeof(MyObjectBuilder_OxygenContainerObject),
+            typeof(MyObjectBuilder_GasContainerObject)
+            };
+
+            // Iterate through the item types to find the correct definition
+            foreach (var itemType in itemTypes)
+            {
+                itemDefinition = definitionManager.GetDefinition(new MyDefinitionId(itemType, itemName));
                 if (itemDefinition != null)
                 {
                     return (itemType.Name, itemDefinition.Id.SubtypeName);
@@ -386,10 +528,18 @@ namespace NachoPluginSystem
     {
         public string Name { get; set; }
         public ulong Price { get; set; }
+        public ulong SellPrice { get; set; }
         public string Subtype { get; set; }
         public string Type { get; set; }
     }
     public class PurchaseRequest
+    {
+        public string ItemName { get; set; }
+        public ulong Quantity { get; set; }
+        public ulong TotalCost { get; set; }
+        public string Type { get; set; }
+    }
+    public class SellRequest
     {
         public string ItemName { get; set; }
         public ulong Quantity { get; set; }

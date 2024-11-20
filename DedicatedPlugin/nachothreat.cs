@@ -3,9 +3,11 @@ using VRage.Game.Components;
 using VRageMath;
 using System.Text;
 using NachoPluginSystem;
-using System.Windows.Forms;
 using VRage.Utils;
 using System;
+using System.Collections.Generic;
+using VRage.Game.ModAPI;
+using System.Windows.Forms;
 
 namespace nachothreat
 {
@@ -25,6 +27,7 @@ namespace nachothreat
         protected override void UnloadData()
         {
             MyAPIGateway.Multiplayer.UnregisterSecureMessageHandler(12345, HandleClientRequest);
+            _spawnerAPI.UnregisterListener();
         }
 
         private void HandleClientRequest(ushort handler, byte[] data, ulong sender, bool fromServer)
@@ -72,7 +75,7 @@ namespace nachothreat
             }
             catch (Exception ex)
             {
-                NachoPlugin.Log($"{ ex}");
+                NachoPlugin.Log($"{ex}");
             }
         }
 
@@ -93,5 +96,4 @@ namespace nachothreat
             return 0.0;
         }
     }
-
 }
