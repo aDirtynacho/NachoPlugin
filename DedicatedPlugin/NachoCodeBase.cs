@@ -17,6 +17,9 @@ using VRage.ObjectBuilders;
 using VRage;
 using Sandbox.Definitions;
 using System.Text;
+using VRage.Game.ObjectBuilders.Definitions;
+using Shared.Config;
+using Epic.OnlineServices;
 
 // Define the promotion levels
 public enum PromotionLevel
@@ -58,7 +61,7 @@ namespace NachoPluginSystem
         //this line below this is the OnTimerElapsed beginning, right now with it commented and the Timer.Elapsed += OnTimerElapsed; its disabled, uncomment to re-enable
         //Additionally, i've learned this is just to construct it, i can call a true configuration of it later in InitializeConfiguration() since its tied to the event OnSessionReady
         //And that will allow "Plugin.Instance.Config.*" to return properly
-        public static readonly Timer Timer = new Timer(TimeSpan.FromMinutes(15).TotalMilliseconds);
+        public static readonly Timer Timer = new Timer(TimeSpan.FromMinutes(90).TotalMilliseconds);
         public const ushort MESSAGE_ID = 22345;
         public static Timer reboot;
         // Flags to track initialization
@@ -69,6 +72,14 @@ namespace NachoPluginSystem
         public bool _httpClientInitialized = false;
         public bool _cooldownManagerInitialized = false;
         public bool _configurationInitialized = false;
+        public int viewdistance = 0;
+        public NachoTracker nachoTracker = new NachoTracker();
+        public ServerShopHandler shopHandler = new ServerShopHandler();
+        private static readonly MyDefinitionId Electricity = new MyDefinitionId(typeof(MyObjectBuilder_GasProperties), "Electricity");
+        public IPluginConfig NachoConfig => nachoConfig?.Data;
+        private PersistentConfig<PluginConfig> nachoConfig;
+        public string configFile = Path.Combine(MyFileSystem.UserDataPath, "NachoEssentialPlugin.cfg");
+
         public NachoPlugin()
         {
             try
@@ -92,11 +103,14 @@ namespace NachoPluginSystem
         {
             if (!_configurationInitialized)
             {
+                
                 try
                 {
-                    cleanupTimer.Interval = TimeSpan.FromHours(Plugin.Instance.Config.Cleanup).TotalMilliseconds;
+                    LoadConfig();
+                    viewdistance = nachoTracker.clients.ViewDistance;
+                    cleanupTimer.Interval = TimeSpan.FromHours(NachoConfig.Cleanup).TotalMilliseconds;
                     Log(cleanupTimer.Interval.ToString());
-                    UpdateCooldownDuration(Plugin.Instance.Config.Cooldown);
+                    UpdateCooldownDuration(NachoConfig.Cooldown);
                     _configurationInitialized = true;
                     Log("Configuration Loaded Successfully");
                 }
@@ -121,9 +135,24 @@ namespace NachoPluginSystem
                 LoadRandomStrings(stringPath);
                 ShuffleRandomStrings();
                 _fileOperationsInitialized = true;
+                
             }
         }
 
+        private void LoadConfig()
+        {
+            //to access the config i make, use NachoConfig.* to access everything stored there, its easier to reload the plugin config without having to restart the whole server
+            //every fucking time lol.
+            try
+            {
+                nachoConfig = PersistentConfig<PluginConfig>.Load(Plugin.Instance.Log, configFile);
+                Log("Config reloaded");
+            }
+            catch (Exception ex)
+            {
+                Log($"{ex}");
+            }
+        }
 
         private void PopulateQueue()
         {
@@ -337,6 +366,59 @@ namespace NachoPluginSystem
             return 0;
         }
 
+        public IMyPlayer GetPlayerByName(string playerName)
+        {
+            List<IMyPlayer> players = new List<IMyPlayer>();
+            MyAPIGateway.Players.GetPlayers(players);
+
+            // Iterate through players to find the matching name and return the player object
+            foreach (IMyPlayer player in players)
+            {
+                if (player.DisplayName == playerName)
+                {
+                    return player;
+                }
+            }
+
+            // Return null if the player with the given name is not found
+            return null;
+        }
+
+        public float GetPlayerInventoryVolume(IMyPlayer player)
+        {
+            if (player != null)
+            {
+                var character = player.Character;
+                if (character != null)
+                {
+                    var inventory = character.GetInventory() as IMyInventory;
+                    if (inventory != null)
+                    {
+                        return (float)inventory.CurrentVolume;
+                    }
+                }
+            }
+            return 0f;
+        }
+
+        public float GetPlayerMaxInventoryVolume(IMyPlayer player)
+        {
+            if (player != null)
+            {
+                var character = player.Character;
+                if (character != null)
+                {
+                    var inventory = character.GetInventory() as IMyInventory;
+                    if (inventory != null)
+                    {
+                        return (float)inventory.MaxVolume;
+                    }
+                }
+            }
+            return 0f;
+        }
+
+
         public static void EnsureFileExists(string filePath)
         {
             if (!File.Exists(filePath))
@@ -407,6 +489,7 @@ namespace NachoPluginSystem
                 AutoReset = true
             };           
             cleanupTimer.Elapsed += CleanupTimer_Elapsed;
+            
             cleanupTimer.Start();
             SetOneOffTimer();
             MyAPIGateway.Multiplayer.RegisterSecureMessageHandler(MESSAGE_ID, HandleMessage);
@@ -417,16 +500,28 @@ namespace NachoPluginSystem
         private static void SetOneOffTimer()
         {
             DateTime now = DateTime.Now;
-            DateTime nextTrigger = new DateTime(now.Year, now.Month, now.Day, 1, 19, 0);
+            DateTime nextTrigger;
 
-            if (now > nextTrigger)
+            // Determine the next trigger time
+            if (now.Hour < 1 || (now.Hour == 1 && now.Minute < 19))
             {
-                nextTrigger = nextTrigger.AddDays(1);
+                // Set next trigger to 1:19 AM today
+                nextTrigger = new DateTime(now.Year, now.Month, now.Day, 1, 19, 0);
+            }
+            else if (now.Hour < 13 || (now.Hour == 13 && now.Minute < 19))
+            {
+                // Set next trigger to 1:19 PM today
+                nextTrigger = new DateTime(now.Year, now.Month, now.Day, 13, 19, 0);
+            }
+            else
+            {
+                // Set next trigger to 1:19 AM the next day
+                nextTrigger = new DateTime(now.Year, now.Month, now.Day, 1, 19, 0).AddDays(1);
             }
 
-            double intervalToFirstTrigger = (nextTrigger - now).TotalMilliseconds;
+            double intervalToNextTrigger = (nextTrigger - now).TotalMilliseconds;
 
-            reboot = new Timer(intervalToFirstTrigger);
+            reboot = new Timer(intervalToNextTrigger);
             reboot.Elapsed += RebootTimer;
             reboot.AutoReset = false; // One-off timer
             reboot.Start();
@@ -453,6 +548,8 @@ namespace NachoPluginSystem
                 await Task.Delay(TimeSpan.FromMinutes(1));
             }
             ScanAndDeleteOutOfRangeGrids();
+            
+            shopHandler.ReloadShopItems();
         }
 
         public bool isProcessing = false;
@@ -485,7 +582,7 @@ namespace NachoPluginSystem
         public static void Log(string message)
         {
             Console.WriteLine(message); // Log to console
-
+            
             try
             {
                 // Specify the full path to the log file "NachoLog.txt"
@@ -596,8 +693,7 @@ namespace NachoPluginSystem
 
             foreach (var entity in entities)
             {
-                var grid = entity as IMyCubeGrid;
-                if (grid != null && grid.BigOwners.Contains(GetPlayerIdentityIdByName(GetPlayerNameFromSteamId(steamId))))
+                if (entity is IMyCubeGrid grid && grid.BigOwners.Contains(GetPlayerIdentityIdByName(GetPlayerNameFromSteamId(steamId))))
                 {
                     totalPCU += GetGridPCU(grid);
                 }
@@ -615,9 +711,7 @@ namespace NachoPluginSystem
             
             foreach (var block in blocks)
             {
-                
-                var blockDefinition = block.BlockDefinition as MyCubeBlockDefinition;
-                if (blockDefinition != null)
+                if (block.BlockDefinition is MyCubeBlockDefinition blockDefinition)
                 {
                     gridPCU += blockDefinition.PCU;
                 }
@@ -650,7 +744,6 @@ namespace NachoPluginSystem
 
         public void GivePlayerItem(ulong targetSteamId, string itemType, string itemSubtype, string amountString)
         {
-
             // Convert the amount from string to long
             if (!long.TryParse(amountString, out long amountLong))
             {
@@ -671,8 +764,7 @@ namespace NachoPluginSystem
             }
 
             // Get the character or the entity controlled by the player
-            var controlledEntity = senderPlayer.Controller.ControlledEntity as IMyEntity;
-            if (controlledEntity == null)
+            if (!(senderPlayer.Controller.ControlledEntity is IMyEntity controlledEntity))
             {
                 Log($"Player is not controlling any entity: {targetSteamId}");
                 return;
@@ -699,8 +791,10 @@ namespace NachoPluginSystem
                 return;
             }
 
+            Type objectType = Type.GetType($"VRage.Game.{itemType}, VRage.Game");
             // Create the item to be added
-            MyObjectBuilder_Base itemBuilder = MyObjectBuilderSerializer.CreateNewObject(new MyObjectBuilderType(typeof(MyObjectBuilder_Component)), itemSubtype);
+            MyObjectBuilder_Base itemBuilder = MyObjectBuilderSerializer.CreateNewObject(new MyObjectBuilderType(objectType), itemSubtype);
+
             if (itemBuilder == null)
             {
                 Log($"Invalid item type or subtype: {itemType}, {itemSubtype}");
@@ -708,8 +802,7 @@ namespace NachoPluginSystem
             }
 
             // Create a physical item object
-            var physicalItem = itemBuilder as MyObjectBuilder_PhysicalObject;
-            if (physicalItem == null)
+            if (!(itemBuilder is MyObjectBuilder_PhysicalObject physicalItem))
             {
                 Log($"Could not create physical item: {itemSubtype}");
                 return;
@@ -805,7 +898,6 @@ namespace NachoPluginSystem
                                 {
                                     Log("Insufficient parameters for changing command");
                                 }
-
                                 break;
                             case "pay":
                                 // Check if there are enough parameters for the pay command
@@ -824,7 +916,7 @@ namespace NachoPluginSystem
                                 else
                                 {
                                     Log("Insufficient parameters for pay command");
-                                    MyAPIGateway.Utilities.SendMessage("Usage: !pay *username* *amount*");
+                                    MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID,WhisperMessage("Usage: !pay *username* *amount*"), sender);
                                 }
                                 break;
                             case "help":
@@ -833,8 +925,7 @@ namespace NachoPluginSystem
                                 string availableCommands = GetAvailableCommands(sender);
                                 // Log the available commands
                                 Log(availableCommands);
-                                byte[] messageBytes = Encoding.UTF8.GetBytes(availableCommands);
-                                MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, messageBytes, sender);
+                                MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, WhisperMessage(availableCommands), sender);
                                 break;
                             case "flex":
                                 HandleFlexCommand(sender);
@@ -864,9 +955,17 @@ namespace NachoPluginSystem
                                 HandleGridsCommand();
                                 break;
                             case "power":
-                                HandlePowerCommand(sender);
+                                if (messageParts.Length < 2)
+                                {
+                                    MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, WhisperMessage("This command will power up the first battery in your Small Grid your currently seated in (the first battery in the block list), type '!power confirm' to use"),sender);
+                                }
+                                else
+                                {
+                                    HandlePowerCommand(sender);
+                                }
+                                
                                 break;
-                            case "giveitem":
+                            case "give_item":
                                 if (messageParts.Length > 3)
                                 {
                                     GivePlayerItem(GetSteamIdFromPlayerName(messageParts[1]), "MyObjectBuilder_Component", messageParts[2], messageParts[3]);
@@ -874,6 +973,49 @@ namespace NachoPluginSystem
                                 else
                                 {
                                     Log($"Not enough Commands for GiveItem:{sender}");
+                                }
+                                break;
+                            case "scrapit":
+                                if (messageParts.Length < 2)
+                                {
+                                    MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, WhisperMessage("This command will check the last time the server has seen the player login"), sender);
+                                }
+                                else
+                                {
+                                    CheckPlayerLogin(messageParts[1], sender);
+                                }
+                                break;
+                            case "updateshop":
+                                shopHandler.ReloadShopItems();
+                                break;
+                            case "gridsnear":
+                                HandleGridsNearMeCommand(sender);
+                                break;
+                            case "sell":
+                                var player = GetPlayerBySteamId(sender);
+                                var grid = GetLookedAtGrid(player);
+
+                                if (grid == null)
+                                {
+                                    SendPlayerMessage(sender, "Error: No valid grid found within range.");
+                                    break;
+                                }
+
+                                if (!PlayerOwnsGrid(player, grid))
+                                {
+                                    SendPlayerMessage(sender, "Error: You do not own this grid.");
+                                    break;
+                                }
+
+                                if (messageParts.Length < 2)
+                                {
+                                    PriceCheckGrid(player);
+                                    SendPlayerMessage(sender, "Use !sell confirm to sell the grid/block, this cannot be undone!");
+                                }
+                                else
+                                {
+                                    SellGrid(player);
+                                    SendPlayerMessage(sender, "Grid/Block Sold!");
                                 }
                                 break;
 
@@ -906,6 +1048,44 @@ namespace NachoPluginSystem
             MyAPIGateway.Utilities.ShowMessage("Nacho Bot", $"Message from {senderSteamId}: {message}");
             Log($"{senderSteamId} sent {message}");
             OnMessageEntered(senderSteamId, message);
+        }
+
+        public void CheckPlayerLogin(string playerName, ulong sender)
+        {
+            try
+            {
+                // Ensure the path to the player names file
+                var playerFile = Path.Combine(MyFileSystem.UserDataPath, "PlayerSteamIDandNames.txt");
+                if (File.Exists(playerFile))
+                {
+                    var existingLines = File.ReadAllLines(playerFile);
+                    // Parse existing lines and search for the player name
+                    foreach (var line in existingLines)
+                    {
+                        var parts = line.Split(',');
+                        if (parts.Length == 3 && parts[1].Equals(playerName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            string lastSeen = parts[2];
+                            MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, WhisperMessage($"Player {playerName} was last seen at {lastSeen}"), sender);
+                            Console.WriteLine($"Player {playerName} was last seen at {lastSeen}");
+                            return;
+                        }
+                    }
+                    var message1 = WhisperMessage($"Player {playerName} not found.");
+                    MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message1, sender);
+                    Console.WriteLine($"Player {playerName} was not found");
+                }
+                else
+                {
+                    Console.WriteLine("Player data file does not exist.");
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log errors
+                Console.WriteLine($"Error checking player login: {ex.Message}");
+                MyAPIGateway.Utilities.SendMessage("error");
+            }
         }
 
         public void HandlePowerCommand(ulong senderSteamId)
@@ -965,8 +1145,7 @@ namespace NachoPluginSystem
 
             if (controlledEntity is IMyCharacter character)
             {
-                IMyShipController shipController = character.Parent as IMyShipController;
-                if (shipController != null)
+                if (character.Parent is IMyShipController shipController)
                 {
                     grid = shipController.CubeGrid;
                 }
@@ -1027,7 +1206,7 @@ namespace NachoPluginSystem
 
             int turnedOffCount = 0;
 
-            foreach (IMyCubeGrid grid in entities)
+            foreach (IMyCubeGrid grid in entities.Cast<IMyCubeGrid>())
             {
                 IMyGridTerminalSystem terminalSystem = MyAPIGateway.TerminalActionsHelper.GetTerminalSystemForGrid(grid);
                 if (terminalSystem != null)
@@ -1053,7 +1232,7 @@ namespace NachoPluginSystem
 
             int turnedOffCount = 0;
 
-            foreach (IMyCubeGrid grid in entities)
+            foreach (IMyCubeGrid grid in entities.Cast<IMyCubeGrid>())
             {
                 IMyGridTerminalSystem terminalSystem = MyAPIGateway.TerminalActionsHelper.GetTerminalSystemForGrid(grid);
                 if (terminalSystem != null)
@@ -1153,15 +1332,15 @@ namespace NachoPluginSystem
             //this code here is how we do things, THIS CALLS THE VAR STORED IN THE FILE, CANNOT CALL THIS WAY UNLESS SERVER IS RUNNING, OTHERWISE THIS CODE-LINK IS NULL
             //so just honestly don't use it in initializers or in the "Before, After, or Load Data" methods.
             string motd = Plugin.Instance.Config.Motd;
-            var message = WhisperMessage(motd);
-            MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
-
+            
+            MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, WhisperMessage(motd), sender);
+            
         }
 
         public void HandleDiscordCommand(ulong sender)
         {
             // Send the Discord invite link to the player who entered the command
-            var message = WhisperMessage("Come join us on discord at discord.gg/vnAt8X64ut");
+            var message = WhisperMessage("Come join us on discord at discord.gg/vnAt8X64ut. Use $ to chat with players in discord!");
             MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
             Log("Discord Command Detected");
         }
@@ -1238,12 +1417,20 @@ namespace NachoPluginSystem
                     string responseBody = await response.Content.ReadAsStringAsync();
                     if (responseBody.Contains("1"))
                     {
-                        var message = WhisperMessage("Vote reward claimed! Enjoy 5 Power cells!");
-                        MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
+                        
+                        
                         Log($"{sender} claimed reward!");
                         long target = MyAPIGateway.Players.TryGetIdentityId(sender);
                         MyAPIGateway.Players.RequestChangeBalance(target, Plugin.Instance.Config.Reward);
-                        GivePlayerItem(sender, "MyObjectBuilder_Component", "PowerCell", "5");
+                        List<string> componetList = new List<String> { "PowerCell", "Motor", "MetalGrid", "Girder", "Display", "BulletproofGlass", "Superconductor", "Computer", "Reactor", "Medical", "Detector" };
+                        Random random = new Random();
+                        string randomComponent = componetList[random.Next(componetList.Count)];
+                        Random number = new Random();
+                        int amount = number.Next(5, 13);
+                        string amountString = amount.ToString();
+                        GivePlayerItem(sender, "MyObjectBuilder_Component", randomComponent, amountString);
+                        var message = WhisperMessage($"Vote reward claimed! Enjoy {amountString} {randomComponent}");
+                        MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, message, sender);
 
                     }
                     else
@@ -1375,9 +1562,16 @@ namespace NachoPluginSystem
                 Log("Punished Player");
             }
         }
+        private string Owners(List<long> owners)
+        {
+            return owners == null || !owners.Any()
+                ? "None"
+                : string.Join(", ", owners);
+        }
+        
         public void ScanAndDeleteOutOfRangeGrids()
         {
-
+            NachoPluginDiscord discord = new NachoPluginDiscord();
             // Get all entities in the world
             HashSet<IMyEntity> entities = new HashSet<IMyEntity>();
             MyAPIGateway.Entities.GetEntities(entities);
@@ -1387,7 +1581,8 @@ namespace NachoPluginSystem
             Dictionary<string, int> entityTypeCounts = new Dictionary<string, int>();
 
             // Find all Scrap Beacon blocks
-            List<IMyCubeBlock> scrapBeacons = new List<IMyCubeBlock>();
+            Dictionary<IMyCubeBlock, Vector3D> scrapBeacons = new Dictionary<IMyCubeBlock, Vector3D>();
+
             foreach (IMyEntity entity in entities)
             {
                 // Increment count for each entity type
@@ -1403,10 +1598,20 @@ namespace NachoPluginSystem
                     cubeGrid.GetBlocks(blocks);
                     foreach (IMySlimBlock block in blocks)
                     {
-                        if (block.FatBlock is IMyCubeBlock cubeBlock && IsScrapBeacon(cubeBlock))
+
+                        string detectedBlock;
+                        // Modified block detection and addition with coordinates
+                        if (block.FatBlock is IMyCubeBlock cubeBlock && IsScrapBeacon(cubeBlock, out detectedBlock) && IsBeaconFunctionalAndPowered(cubeBlock, detectedBlock))
                         {
-                            scrapBeacons.Add(cubeBlock);
-                            //Log($"Scrap Beacon found: {cubeBlock.EntityId}");
+                            // Get block's world coordinates
+                            Vector3D coordinates = cubeBlock.GetPosition();
+
+                            // Add block and its coordinates to the dictionary
+                            scrapBeacons[cubeBlock] = coordinates;
+                            
+                            //Log($"GPS:{cubeBlock.GetOwnerFactionTag()} #{cubeBlock.DisplayName}:{coordinates.X}:{coordinates.Y}:{coordinates.Z}:#FF75C9F1:");
+                            //_ = discord.PostToBotLog($"{MyAPIGateway.Session.Name} GPS:{cubeBlock.GetOwnerFactionTag()} #{cubeBlock.DisplayName}:{coordinates.X}:{coordinates.Y}:{coordinates.Z}:#FF75C9F1:");
+
                         }
                     }
 
@@ -1423,6 +1628,8 @@ namespace NachoPluginSystem
             {
                 Log($"Found {pair.Value} entities of type {pair.Key}");
             }
+            int staticGridCount = 0;
+            int dynamicGridCount = 0;
 
             // Retrieve all grids
             List<IMyCubeGrid> grids = new List<IMyCubeGrid>();
@@ -1431,10 +1638,22 @@ namespace NachoPluginSystem
                 if (entity is IMyCubeGrid grid)
                 {
                     grids.Add(grid);
+                    if (grid.IsStatic)
+                    {
+                        staticGridCount++;
+                    }
+                    else
+                    {
+                        dynamicGridCount++;
+                    }
                 }
             }
             Log($"Grids found: {grids.Count}");
+            Log($"Static Grids (Non Sim Speed Killing){staticGridCount}");
+            Log($"Dynamic Grids (Sim Speed Killers){dynamicGridCount}");
             MyAPIGateway.Utilities.SendMessage($"Grids found: {grids.Count}");
+            MyAPIGateway.Utilities.SendMessage($"Static Grids (Non Sim Speed Killing){staticGridCount}");
+            MyAPIGateway.Utilities.SendMessage($"Dynamic Grids (Sim Speed Killers){dynamicGridCount}");
             foreach (IMyCubeGrid grid in grids)
             {
                 //Log("Checking Distances");
@@ -1443,39 +1662,69 @@ namespace NachoPluginSystem
                 {
                     //Log("Deleting some grid");
                     // Delete the grid if it's not within range
+                    _ = discord.PostToBotLog($"{grid.CustomName}, NPC:{grid.IsNpcSpawnedGrid}, Owners:{Owners(grid.SmallOwners)}");
                     DeleteGrid(grid);
+
                 }
             }
-        }
-
-        public bool IsScrapBeacon(IMyCubeBlock block)
+        } 
+        private bool IsBeaconFunctionalAndPowered(IMyCubeBlock cubeBlock, string detectedBlock)
         {
-            //Log("IS THIS BEING CHECKED?");
-            // Check if the block is a Scrap Beacon block based on its subtype ID or block type ID
-            // Replace "ScrapBeaconSubtypeId" with the actual subtype ID or block type ID of the Scrap Beacon block
-            return block.BlockDefinition.SubtypeId == "LargeBlockScrapBeacon" ||
-                 block.BlockDefinition.SubtypeId == "SmallBlockScrapBeacon";
+            if (detectedBlock == "StoreBlock")
+            {
+                return true;
+            }
+            if (cubeBlock is IMyFunctionalBlock functionalBlock)
+            {
+                // Checks if the beacon is functional (not damaged) and is on a powered grid
+                return functionalBlock.IsFunctional && functionalBlock.ResourceSink.IsPoweredByType(Electricity) ;
+            }
+            return false;
         }
 
-        public bool IsGridWithinRangeOfScrapBeacon(IMyCubeGrid grid, List<IMyCubeBlock> scrapBeacons)
+        public bool IsScrapBeacon(IMyCubeBlock block, out string detectedBlock)
+        {
+            // Initialize the out parameter
+            detectedBlock = null;
+
+            // Check if the block is a Scrap Beacon block based on its subtype ID
+            if (block.BlockDefinition.SubtypeId == "LargeBlockScrapBeacon")
+            {
+                detectedBlock = "LargeBlockScrapBeacon";
+                return true;
+            }
+            else if (block.BlockDefinition.SubtypeId == "SmallBlockScrapBeacon")
+            {
+                detectedBlock = "SmallBlockScrapBeacon";
+                return true;
+            }
+            else if (block.BlockDefinition.SubtypeId == "StoreBlock")
+            {
+                detectedBlock = "StoreBlock";
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool IsGridWithinRangeOfScrapBeacon(IMyCubeGrid grid, Dictionary<IMyCubeBlock, Vector3D> scrapBeacons)
         {
             // Get the position of the grid's center
             Vector3D gridPosition = grid.PositionComp.GetPosition();
 
-            // Iterate through all Scrap Beacon blocks
-            foreach (IMyCubeBlock scrapBeacon in scrapBeacons)
+            // Iterate through all Scrap Beacon blocks and their coordinates
+            foreach (var scrapBeacon in scrapBeacons)
             {
                 // Calculate the distance between the grid and the Scrap Beacon block
-                double distance = Vector3D.Distance(gridPosition, scrapBeacon.GetPosition());
+                double distance = Vector3D.Distance(gridPosition, scrapBeacon.Value);
 
                 // If the distance is within range, return true
-                if (distance <= 250)
+                if (distance <= 500)
                 {
                     return true;
                 }
             }
 
-            // If no Scrap Beacon block is within range, return false
             return false;
         }
 
@@ -1488,27 +1737,386 @@ namespace NachoPluginSystem
         public void HandleGridsCommand()
         {
             HashSet<IMyEntity> entities = new HashSet<IMyEntity>();
+            List<IMyCubeGrid> grids1 = new List<IMyCubeGrid>();
+            MyAPIGateway.Entities.GetEntities(entities, e => e is IMyCubeGrid);
+            int staticGridCount = 0;
+            int dynamicGridCount = 0;
+            int gridCount = entities.Count;
+            foreach (IMyEntity entity in entities)
+            {
+                if (entity is IMyCubeGrid grid)
+                {
+                    grids1.Add(grid);
+                    if (grid.IsStatic)
+                    {
+                        staticGridCount++;
+                    }
+                    else
+                    {
+                        dynamicGridCount++;
+                    }
+                }
+            }
+            MyAPIGateway.Utilities.SendMessage($"Total number of grids: {gridCount}");
+            MyAPIGateway.Utilities.SendMessage($"Static Grids (Non Sim Speed Killing){staticGridCount}");
+            MyAPIGateway.Utilities.SendMessage($"Dynamic Grids (Sim Speed Killers){dynamicGridCount}");
+            Log($"Total number of grids: {gridCount}");
+            
+            
+        }
+
+        public void HandleGridsNearMeCommand(ulong sender)
+        {
+            HashSet<IMyEntity> entities = new HashSet<IMyEntity>();
+            List<IMyCubeGrid> grids1 = new List<IMyCubeGrid>();
             MyAPIGateway.Entities.GetEntities(entities, e => e is IMyCubeGrid);
 
-            int gridCount = entities.Count;
-            MyAPIGateway.Utilities.SendMessage($"Total number of grids: {gridCount}");
-            Log($"Total number of grids: {gridCount}");
+            IMyPlayer player = GetPlayerBySteamId(sender);
+            if (player == null)
+            {
+                MyAPIGateway.Utilities.SendMessage("No player found.");
+                return;
+            }
+
+            Vector3D playerPosition = player.GetPosition();
+            double radius = 500.0;
+            int staticGridCount = 0;
+            int dynamicGridCount = 0;
+            int gridCount = 0;
+
+            foreach (IMyEntity entity in entities)
+            {
+                if (entity is IMyCubeGrid grid)
+                {
+                    double distance = Vector3D.Distance(playerPosition, grid.GetPosition());
+                    if (distance <= radius)
+                    {
+                        grids1.Add(grid);
+                        gridCount++;
+                        if (grid.IsStatic)
+                        {
+                            staticGridCount++;
+                        }
+                        else
+                        {
+                            dynamicGridCount++;
+                        }
+                    }
+                }
+            }
+
+            MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, WhisperMessage($"Total number of grids within 250m: {gridCount}"),sender);
+            MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, WhisperMessage($"Static Grids (Non Sim Speed Killing): {staticGridCount}"),sender);
+            MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, WhisperMessage($"Dynamic Grids (Sim Speed Killers): {dynamicGridCount}"), sender);
+            Log($"Total number of grids within 250m: {gridCount}");
         }
 
         public void TestArea(string configsetting, string param)
         {
-            string test1 = Plugin.Instance.Config.Motd;
-
-            Log($"{test1}");
-            //this is what i need
-            Plugin.Instance.Config.Motd = param;
-            Log($"{test1}");
-            test1 = param;
-
-            Log($"{test1}");
-
+            var paramdistance = int.Parse(param);
+            Log($"{viewdistance}");
+            if ( param == null || paramdistance != viewdistance)
+            {
+                MyAPIGateway.Utilities.SendMessage($"{viewdistance}");
+                viewdistance = paramdistance;
+                MyAPIGateway.Utilities.SendMessage($"{viewdistance}");
+                
+            }
+            
         }
+        // Method to price check the blocks in the grid the player is looking at
+        public ulong PriceCheckGrid(IMyPlayer player)
+        {
+            var grid = GetLookedAtGrid(player);
+            if (grid == null)
+            {
+                SendPlayerMessage(player.SteamUserId, "Error: No valid grid found within range.");
+                return 0;
+            }
+
+            if (!PlayerOwnsGrid(player, grid))
+            {
+                SendPlayerMessage(player.SteamUserId, "Error: You do not own this grid or its sub-grids.");
+                return 0;
+            }
+
+            List<IMyCubeGrid> connectedGrids = new List<IMyCubeGrid>();
+            MyAPIGateway.GridGroups.GetGroup(grid, GridLinkTypeEnum.Mechanical, connectedGrids);
+
+            ulong totalValue = 0;
+
+            foreach (var connectedGrid in connectedGrids)
+            {
+                totalValue += CalculateGridValue(connectedGrid);
+            }
+
+            SendPlayerMessage(player.SteamUserId, $"Price Check: The grid and its sub-grids are worth {totalValue} Space Credits.");
+            return totalValue;
+        }
+
+
+        // Method to sell the grid the player is looking at
+        private void SellGrid(IMyPlayer player)
+        {
+            var grid = GetLookedAtGrid(player);
+            List<IMyCubeGrid> connectedGrids = new List<IMyCubeGrid>();
+            MyAPIGateway.GridGroups.GetGroup(grid, GridLinkTypeEnum.Mechanical, connectedGrids);
+
+            ulong totalValue = 0;
+
+            foreach (var connectedGrid in connectedGrids)
+            {
+                totalValue += CalculateGridValue(connectedGrid);
+
+                // Optionally remove each sub-grid after selling
+                connectedGrid.Close();
+            }
+
+            // Add currency to the player's balance
+            MyAPIGateway.Players.RequestChangeBalance(player.IdentityId, (long)totalValue);
+
+            SendPlayerMessage(player.SteamUserId, $"Success: Sold grid and sub-grids for {totalValue} Space Credits.");
+        }
+
+
+        private IMyCubeGrid GetLookedAtGrid(IMyPlayer player)
+        {
+            var character = player.Character;
+            if (character == null)
+                return null;
+
+            var headMatrix = character.GetHeadMatrix(true);
+            Vector3D start = headMatrix.Translation;
+            Vector3D direction = headMatrix.Forward;
+            Vector3D end = start + direction * 10.0;
+
+            IHitInfo hitInfo;
+            if (MyAPIGateway.Physics.CastRay(start, end, out hitInfo))
+            {
+                return hitInfo.HitEntity as IMyCubeGrid;
+            }
+            return null;
+        }
+
+        private bool PlayerOwnsGrid(IMyPlayer player, IMyCubeGrid grid)
+        {
+            var playerIdentityId = player.IdentityId;
+            List<IMyCubeGrid> connectedGrids = new List<IMyCubeGrid>();
+            MyAPIGateway.GridGroups.GetGroup(grid, GridLinkTypeEnum.Mechanical, connectedGrids);
+
+            int totalBlocks = 0;
+            int ownedBlocks = 0;
+
+            foreach (var connectedGrid in connectedGrids)
+            {
+                List<IMySlimBlock> blocks = new List<IMySlimBlock>();
+                connectedGrid.GetBlocks(blocks, block => block != null);
+
+                foreach (var block in blocks)
+                {
+                    if (block.OwnerId == 0) // Neutral or unowned block
+                    {
+                        continue;
+                    }
+
+                    totalBlocks++;
+
+                    if (block.OwnerId == playerIdentityId)
+                    {
+                        ownedBlocks++;
+                    }
+                }
+            }
+
+            // Check if the player owns more than 50% of the non-neutral blocks in the grid group
+            return ownedBlocks > totalBlocks / 2;
+        }
+
+
+
+
+        private ulong CalculateGridValue(IMyCubeGrid grid)
+        {
+            ulong totalValue = 0;
+            List<IMySlimBlock> blocks = new List<IMySlimBlock>();
+            grid.GetBlocks(blocks, block => block != null);
+
+            foreach (var block in blocks)
+            {
+                totalValue += CalculateBlockValue(block);
+            }
+
+            return totalValue;
+        }
+
+        private ulong CalculateBlockValue(IMySlimBlock block)
+        {
+            float integrity = block.BuildIntegrity;
+            string blockSubtype = block.BlockDefinition.Id.SubtypeName;
+            ulong baseValue = GetBaseBlockValue(blockSubtype);
+
+            return (ulong)(baseValue * (integrity / block.MaxIntegrity));
+        }
+
+        private ulong GetBaseBlockValue(string blockSubtype)
+        {
+            Dictionary<string, ulong> blockPrices = new Dictionary<string, ulong>
+            {
+                { "LargeBlockBatteryBlock", 375 },
+                { "SmallBlockBatteryBlock", 312 },
+                { "SmallBlockSmallBatteryBlock", 150 },
+                { "SmallBlockSmallGenerator", 250 },
+                { "SmallBlockLargeGenerator", 500 },
+                { "LargeBlockSmallGenerator", 375 },
+                { "LargeBlockLargeGenerator", 625 },
+                { "LargeHydrogenEngine", 938 },
+                { "SmallHydrogenEngine", 400 },
+                { "LargeBlockWindTurbine", 188 },
+                { "LargeBlockSolarPanel", 225 },
+                { "SmallBlockSolarPanel", 163 },
+                { "LargeBlockRadioAntennaDish", 575 },
+                { "VirtualMassLarge", 262 },
+                { "VirtualMassSmall", 213 },
+                { "SpaceBallLarge", 388 },
+                { "SpaceBallSmall", 200 },
+                { "SmallJumpDrive", 1125 },
+                { "LargeBlockVaporator", 625 },
+                { "SmallProgrammableBlock", 563 },
+                { "LargeProgrammableBlock", 750 },
+                { "LargeProjector", 650 },
+                { "SmallProjector", 375 },
+                { "LargeTurretControlBlock", 975 },
+                { "SmallTurretControlBlock", 775 },
+                { "EventControllerLarge", 500 },
+                { "EventControllerSmall", 312 },
+                { "LargeBlockRadioAntenna", 450 },
+                { "LargeBlockBeacon", 175 },
+                { "SmallBlockBeacon", 113 },
+                { "SmallBlockRadioAntenna", 275 },
+                { "LargeBlockLaserAntenna", 513 },
+                { "SmallBlockLaserAntenna", 362 },
+                { "LargeBlockGyro", 550 },
+                { "SmallBlockGyro", 312 },
+                { "FoodDispenser", 100 },
+                { "MedicalStation", 150 },
+                { "LargeBlockColorableSolarPanel", 425 },
+                { "LargeBlockColorableSolarPanelCorner", 350 },
+                { "LargeBlockColorableSolarPanelCornerInverted", 375 },
+                { "SmallBlockColorableSolarPanel", 250 },
+                { "SmallBlockColorableSolarPanelCorner", 225 },
+                { "SmallBlockColorableSolarPanelCornerInverted", 288 },
+                { "LargeBlockWindTurbineReskin", 200 },
+                { "LargeBlockBeaconReskin", 188 },
+                { "SmallBlockBeaconReskin", 150 },
+                { "LargeBlockCryoRoom", 688 },
+                { "LargeMedicalRoomReskin", 625 },
+                { "LargeBarrelStack", 113 },
+                { "StoreBlock", 850 },
+                { "SafeZoneBlock", 1087 },
+                { "ContractBlock", 762 },
+                { "VendingMachine", 362 },
+                { "AtmBlock", 388 },
+                { "LargeMedicalRoom", 938 },
+                { "LargeBlockCryoChamber", 825 },
+                { "SmallBlockCryoChamber", 675 },
+                { "LargeRefinery", 1063 },
+                { "BlastFurnace", 975 },
+                { "OxygenGeneratorSmall", 525 },
+                { "LargeAssembler", 925 },
+                { "BasicAssembler", 650 },
+                { "SurvivalKitLarge", 413 },
+                { "SurvivalKit", 388 },
+                { "LargeBlockOxygenFarm", 325 },
+                { "LargeProductivityModule", 588 },
+                { "LargeEffectivenessModule", 563 },
+                { "LargeEnergyModule", 612 },
+                { "SmallBlockSmallThrustSciFi", 263 },
+                { "SmallBlockLargeThrustSciFi", 388 },
+                { "LargeBlockSmallThrustSciFi", 438 },
+                { "LargeBlockLargeThrustSciFi", 488 },
+                { "LargeBlockLargeAtmosphericThrustSciFi", 513 },
+                { "LargeBlockSmallAtmosphericThrustSciFi", 400 },
+                { "SmallBlockLargeAtmosphericThrustSciFi", 463 },
+                { "SmallBlockSmallAtmosphericThrustSciFi", 338 },
+                { "SmallBlockSmallThrust", 300 },
+                { "SmallBlockLargeThrust", 400 },
+                { "LargeBlockSmallThrust", 438 },
+                { "LargeBlockLargeThrust", 538 },
+                { "LargeBlockLargeHydrogenThrust", 625 },
+                { "LargeBlockSmallHydrogenThrust", 462 },
+                { "SmallBlockLargeHydrogenThrust", 525 },
+                { "SmallBlockSmallHydrogenThrust", 350 },
+                { "LargeBlockLargeAtmosphericThrust", 575 },
+                { "LargeBlockSmallAtmosphericThrust", 425 },
+                { "SmallBlockLargeAtmosphericThrust", 488 },
+                { "SmallBlockSmallAtmosphericThrust", 363 },
+                { "LargeBlockLargeFlatAtmosphericThrust", 650 },
+                { "LargeBlockLargeFlatAtmosphericThrustDShape", 675 },
+                { "LargeBlockSmallFlatAtmosphericThrust", 513 },
+                { "LargeBlockSmallFlatAtmosphericThrustDShape", 538 },
+                { "SmallBlockLargeFlatAtmosphericThrust", 438 },
+                { "SmallBlockLargeFlatAtmosphericThrustDShape", 450 },
+                { "SmallBlockSmallFlatAtmosphericThrust", 388 },
+                { "SmallBlockSmallFlatAtmosphericThrustDShape", 413 },
+                { "LargeOreDetector", 500 },
+                { "SmallBlockOreDetector", 275 },
+                { "LargeJumpDrive", 1000 },
+                { "LgParachute", 213 },
+                { "SmParachute", 163 },
+                { "LargeBlockSmallGeneratorWarfare2", 462 },
+                { "LargeBlockLargeGeneratorWarfare2", 675 },
+                { "SmallBlockSmallGeneratorWarfare2", 400 },
+                { "SmallBlockLargeGeneratorWarfare2", 600 },
+                { "LargeBlockBatteryBlockWarfare2", 500 },
+                { "SmallBlockBatteryBlockWarfare2", 400 },
+                { "SmallBlockSmallModularThruster", 313 },
+                { "SmallBlockLargeModularThruster", 462 },
+                { "LargeBlockSmallModularThruster", 513 },
+                { "LargeBlockLargeModularThruster", 575 },
+                { "LargeProgrammableBlockReskin", 750 },
+                { "SmallProgrammableBlockReskin", 575 },
+                { "AirVentFan", 250 },
+                { "AirVentFanFull", 338 },
+                { "SmallAirVentFan", 188 },
+                { "SmallAirVentFanFull", 225 },
+                { "LargeBlockLargeIndustrialContainer", 725 },
+                { "LargeHydrogenTankIndustrial", 775 },
+                { "LargeAssemblerIndustrial", 913 },
+                { "LargeRefineryIndustrial", 1000 },
+                { "LargeBlockLargeHydrogenThrustIndustrial", 762 },
+                { "LargeBlockSmallHydrogenThrustIndustrial", 588 },
+                { "SmallBlockLargeHydrogenThrustIndustrial", 663 },
+                { "SmallBlockSmallHydrogenThrustIndustrial", 438 },
+                { "OxygenTankSmall", 238 },
+                { "LargeHydrogenTank", 550 },
+                { "LargeHydrogenTankSmall", 475 },
+                { "SmallHydrogenTank", 375 },
+                { "SmallHydrogenTankSmall", 300 },
+                { "SmallAirVent", 138 },
+                { "AirVentFull", 288 },
+                { "SmallAirVentFull", 188 },
+                { "SmallBlockSmallContainer", 150 },
+                { "SmallBlockMediumContainer", 225 },
+                { "SmallBlockLargeContainer", 375 },
+                { "LargeBlockSmallContainer", 450 },
+                { "LargeBlockLargeContainer", 575 }
+            };
+
+
+            if (blockPrices.TryGetValue(blockSubtype, out ulong baseValue))
+            {
+                return baseValue;
+            }
+
+            return 0;
+        }
+        private void SendPlayerMessage(ulong steamId, string message)
+        {
+            MyAPIGateway.Multiplayer.SendMessageTo(MESSAGE_ID, WhisperMessage(message), steamId);
+        }
+
     }
+
 
     public class CooldownManager
     {
@@ -1576,7 +2184,11 @@ namespace NachoPluginSystem
         { "grids", PromotionLevel.Default },
         { "flex", PromotionLevel.Default },
         { "power", PromotionLevel.Default },
-        { "giveitem", PromotionLevel.Admin }
+        { "give_item", PromotionLevel.Admin },
+        { "gridsnear", PromotionLevel.Default },
+        { "updateshop", PromotionLevel.Admin },
+        { "scrapit", PromotionLevel.Default },
+        { "sell", PromotionLevel.Default }
 
     };
 

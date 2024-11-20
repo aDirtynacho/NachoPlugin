@@ -40,6 +40,7 @@ namespace Shared.Config
         private int powercost = 10000000;
         private string votekey = "Insert your Voting api key from www.space-engineers.com here";
         private double cleanup = 4;
+        private int port = 27019;
         // TODO: Implement your config fields here
         // The default values here will apply to Client and Dedicated.
         // The default values for Torch are defined in TorchPlugin.
@@ -95,6 +96,11 @@ namespace Shared.Config
             set => SetValue(ref cleanup, value);
         }
 
+        public int Port
+        {
+            get => port;
+            set => SetValue(ref port, value);
+        }
         // TODO: Encapsulate your config fields as properties here
     }
 }

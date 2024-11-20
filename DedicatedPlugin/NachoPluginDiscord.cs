@@ -1,13 +1,17 @@
 ﻿using System;
 using VRage.Game.Components;
-using VRage.Game.ModAPI;
 using Sandbox.ModAPI;
-using System.Runtime.CompilerServices;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 using System.Net;
 using Newtonsoft.Json;
+using Sandbox.Game.Gui;
+using Sandbox.Engine.Multiplayer;
+using VRage.Network;
+using Sandbox.Game.GameSystems;
+using Sandbox.Game.Entities.Character;
+using Sandbox.ModAPI.Ingame;
 
 namespace NachoPluginSystem
 {
@@ -16,6 +20,7 @@ namespace NachoPluginSystem
     public class NachoPluginDiscord : MySessionComponentBase
     {
         private readonly string webhookUrl = "https://discord.com/api/webhooks/1245831400695922708/zlIF2yYQlQ09Ij1pfVQeirkY6hvp5JHUOHbnluJvalwcD2ywRzJItE2ctV5Pq8LKQjmt";
+        private readonly string botLogUrl = "https://discord.com/api/webhooks/1264329810717577217/qJ-R5h9MAHFdwql9M9t__aJvfhxdPZ61JivaqHR5Nw2mgfyK1STyUnVd6G-QGIkcySSt";
         private static readonly HttpClient httpClient = new HttpClient();
         private HttpListener httpListener;
         public NachoPlugin nachoplugin;
@@ -27,7 +32,7 @@ namespace NachoPluginSystem
             
             try
             {
-                InitializeConfiguration();
+               
             }
             catch(Exception ex)
             {
@@ -39,7 +44,8 @@ namespace NachoPluginSystem
         {
             base.LoadData();
             // Your initialization logic here
-            nachoplugin = new NachoPlugin();
+
+            Console.WriteLine("NachoPluginDiscord has been loaded");
             Log1("NachoPluginDiscord has been loaded!");
         }
 
@@ -55,8 +61,11 @@ namespace NachoPluginSystem
         {
             base.BeforeStart();
             // Your setup logic here
-            StartHttpListener();
+            nachoplugin = new NachoPlugin();
+            MyAPIGateway.Session.OnSessionReady += InitializeConfiguration;
             MyAPIGateway.Utilities.MessageRecieved += OnMessageEntered;
+            
+            
 
             Log1("NachoPluginDiscord has started!");
         }
@@ -78,8 +87,16 @@ namespace NachoPluginSystem
             {
                 try
                 {
-                    _configurationInitialized = true;
-                    Log1("Configuration Loaded Successfully");
+                    StartHttpListener();
+                    if (httpListener == null)
+                    {
+                        Console.WriteLine("SHITS FUCKED MAN, IT DIDN'T LAUNCH HTTP");
+                    }
+                    else
+                    {
+                        _configurationInitialized = true;
+                        Log1("Nacho Discord Plugin Configuration Loaded Successfully");
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -89,6 +106,7 @@ namespace NachoPluginSystem
             else
             {
                 Log1("Loading Defaults");
+                _configurationInitialized = true;
             }
 
 
@@ -98,17 +116,25 @@ namespace NachoPluginSystem
         {
             
             var player = nachoplugin.GetPlayerNameFromSteamId(sender);
-            var chatMessage = $"{player}: {message}";
-            if (!message.StartsWith("DISCORD"))
+            var message1 = message.StartsWith("$") ? message.Substring(1) : message; // Remove the $ if it exists
+            var chatMessage = $"{player}: {message1}";
+            if (!message.StartsWith("DISCORD") && message.StartsWith("$"))
             {
+                Log1("ATTEMPTING TO SEND TO NEXT METHOD (PostToWebhook)");
                 Task.Run(() => PostToWebhook(chatMessage));
+            }
+            else if (!message.StartsWith("DISCORD") && message.StartsWith("%"))
+            {
+                Log1("Running botLogUrl");
+                Task.Run(() => PostToBotLog(chatMessage));
             }
             Log1(chatMessage);
             
         }
 
-        private async Task PostToWebhook(string message)
+        public async Task PostToWebhook(string message)
         {
+            Log1("POSTTOWEBHOOK CALLED");
             var payload = new { content = message };
             var jsonPayload = Newtonsoft.Json.JsonConvert.SerializeObject(payload);
             var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
@@ -118,13 +144,26 @@ namespace NachoPluginSystem
             response.EnsureSuccessStatusCode(); // Optional: handle the response status
             Log1($"{response}");
         }
+        public async Task PostToBotLog(string message)
+        {
+            Log1("PostToBotLog called");
+            var payload = new { content = message };
+            var jsonPayload = JsonConvert.SerializeObject(payload);
+            var content = new StringContent(jsonPayload,Encoding.UTF8, "application/json");
+            
+            var response = await httpClient.PostAsync(botLogUrl, content);
+            
+        }
         private void StartHttpListener()
         {
+            Log1("STARTHTTPLISTENER CALLED");
+            int port = Plugin.Instance.Config.Port;
             httpListener = new HttpListener();
-            httpListener.Prefixes.Add("http://*:29019/");
+            httpListener.Prefixes.Add($"http://*:{port}/");
             httpListener.Start();
             Task.Run(() => Listen());
         }
+
         private void StopHttpListener()
         {
             httpListener?.Stop();
